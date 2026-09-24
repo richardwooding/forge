@@ -1,0 +1,34 @@
+version: "2"
+linters:
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errorlint
+    - gocritic
+    - misspell
+    - nilerr
+    - revive
+    - unconvert
+    - unparam
+    - usestdlibvars
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+  exclusions:
+    rules:
+      # Test fixtures for the wasm guests are not part of the module build.
+      - path: testdata/
+        linters:
+          - typecheck
+      # wazero's sys.File mandates Seek(int64, int) (int64, Errno); stdmethods
+      # wants io.Seeker's error return, which would not implement the interface.
+      - path: internal/capability/rootfs/file\.go
+        linters:
+          - govet
+        text: "should have signature Seek"
+formatters:
+  enable:
+    - gofmt
+    - goimports

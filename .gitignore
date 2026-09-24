@@ -1,0 +1,4 @@
+/dist/
+/forge
+coverage.out
+*.wasm

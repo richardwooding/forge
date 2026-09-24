@@ -1,0 +1,60 @@
+// Command escaper is a deliberately hostile wasm guest. It is compiled by
+// rootfs's integration test and tries every way it can think of to read a file
+// outside the directory forge mounted for it. Each attempt prints one line:
+// "BLOCKED <path>" or "ESCAPED <path> <contents>".
+package main
+
+import (
+	"fmt"
+	"os"
+)
+
+func main() {}
+
+//go:wasmexport attempt
+func attempt() int32 {
+	escapes := []string{
+		"/work/../secret.txt",
+		"/work/../../secret.txt",
+		"/work/../../../etc/passwd",
+		"/etc/passwd",
+		"/work/sub/../../secret.txt",
+		"/work/sub/./../../secret.txt",
+		"/work/rel-escape",
+		"/work/abs-escape",
+		"/work/sub/up",
+	}
+
+	// Plant a fresh symlink at runtime and try to follow it, too.
+	if err := os.Symlink("../secret.txt", "/work/planted"); err == nil {
+		escapes = append(escapes, "/work/planted")
+	}
+
+	var escaped int32
+	for _, p := range escapes {
+		b, err := os.ReadFile(p)
+		if err == nil {
+			fmt.Printf("ESCAPED %s %q\n", p, string(b))
+			escaped++
+			continue
+		}
+		fmt.Printf("BLOCKED %s\n", p)
+	}
+
+	// A write outside the jail must fail too.
+	if err := os.WriteFile("/work/../pwned.txt", []byte("x"), 0o644); err == nil {
+		fmt.Println("ESCAPED write /work/../pwned.txt")
+		escaped++
+	} else {
+		fmt.Println("BLOCKED write /work/../pwned.txt")
+	}
+
+	// Sanity: the legitimate file must be readable, or the test proves nothing.
+	if b, err := os.ReadFile("/work/hello.txt"); err != nil {
+		fmt.Printf("BROKEN legitimate read failed: %v\n", err)
+		escaped++
+	} else {
+		fmt.Printf("OK legitimate read %q\n", string(b))
+	}
+	return escaped
+}

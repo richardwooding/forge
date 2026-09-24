@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go build ./...
+      - run: go fix -diff ./...
+      # stdmethods rejects wazero sys.File.Seek, whose signature its ABI mandates.
+      # golangci-lint below keeps the check for every other package.
+      - run: go vet -stdmethods=false ./...
+      # The sandbox tests compile real wasip1 guests with the Go toolchain and
+      # run them under wazero. They are the only tests that prove the jail, so
+      # they are not behind a build tag -- but they are skipped by -short.
+      - run: go test -race -timeout 600s -coverprofile=coverage.out ./...
+
+  short:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go test -short -timeout 120s ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
