@@ -1,0 +1,40 @@
+name: Fuzz
+
+# Native Go fuzzing. Regular CI runs each target's seed corpus on every push;
+# this workflow is the proactive nightly bug-hunt. Crashes land in
+# testdata/fuzz/<FuzzName>/<hash> — commit them as regressions.
+#
+# FuzzFlagRoundTrip is the one that matters most: flag encoding is where
+# cross-surface parity dies, and it finds a break without five surfaces running.
+on:
+  schedule:
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: "Duration per target (e.g. 60s, 5m, 30m)"
+        default: "5m"
+        required: false
+
+jobs:
+  fuzz:
+    name: ${{ matrix.func }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - func: FuzzFlagRoundTrip
+            pkg: ./internal/binding
+          - func: FuzzNormalizeDoesNotPanic
+            pkg: ./internal/binding
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Fuzz ${{ matrix.func }}
+        run: go test -run='^$' -fuzz="^${{ matrix.func }}$" -fuzztime=${{ github.event.inputs.fuzztime || '5m' }} ${{ matrix.pkg }}

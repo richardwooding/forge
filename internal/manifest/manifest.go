@@ -210,6 +210,9 @@ func prepareInput(tool string, op core.OpSpec) (*jsonschema.Resolved, []byte, er
 	if err := rejectRefs(tool, field, op.Input); err != nil {
 		return nil, nil, err
 	}
+	if err := rejectRequiredDefaults(tool, field, op.Input); err != nil {
+		return nil, nil, err
+	}
 
 	// ValidateDefaults, because a default that does not satisfy its own schema
 	// produces a value forge would then hand to a tool as if it were valid.
@@ -278,6 +281,41 @@ func rejectRefs(tool, field string, s *jsonschema.Schema) error {
 				if err := walk(fmt.Sprintf("%s.%s[%d]", path, group.name, i), sub); err != nil {
 					return err
 				}
+			}
+		}
+		return nil
+	}
+	return walk("", s)
+}
+
+// rejectRequiredDefaults refuses a property that is both required and has a
+// default.
+//
+// jsonschema-go deliberately ignores defaults on required properties -- "a
+// required property shouldn't have a default" -- so such a default is never
+// applied. The schema would read as though the value were optional while the
+// validator insisted on it, and the author would never be told. forge's whole
+// purpose is to stop a tool meaning different things to different callers, so a
+// declaration that silently does nothing is rejected where it is written.
+func rejectRequiredDefaults(tool, field string, s *jsonschema.Schema) error {
+	var walk func(path string, s *jsonschema.Schema) error
+	walk = func(path string, s *jsonschema.Schema) error {
+		if s == nil {
+			return nil
+		}
+		required := map[string]bool{}
+		for _, r := range s.Required {
+			required[r] = true
+		}
+		for name, prop := range s.Properties {
+			if prop == nil {
+				continue
+			}
+			if required[name] && len(prop.Default) > 0 {
+				return errf(tool, field, "%s.%s is required and also has a default; the default would never be applied, so remove one of them", path, name)
+			}
+			if err := walk(path+"."+name, prop); err != nil {
+				return err
 			}
 		}
 		return nil
