@@ -12,8 +12,10 @@ package tool
 //
 // These are silent no-ops rather than panics: a handler that logs should not
 // explode merely because its package was built for a test binary.
+//
+// Only the two a handler can reach are stubbed. readCall and retain exist
+// purely to serve the //go:wasmexport entry points, which do not exist off
+// wasm, so stubbing them here would be dead code on every host build.
 
 func hostLog(level int32, msg string)            {}
 func hostProgress(done, total int64, msg string) {}
-func readCall() []byte                           { return nil }
-func retain(b []byte) uint64                     { return 0 }

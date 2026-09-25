@@ -264,7 +264,7 @@ func TestEachInvocationStartsWithFreshState(t *testing.T) {
 	// leftovers. This is what makes the default safe for tools that were never
 	// written with reuse in mind.
 	e, ctx, c := compileGreeter(t)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		resp, err := e.Invoke(ctx, c, wasmrt.Request{
 			Op:    "greet",
 			Input: json.RawMessage(`{"name":"x"}`),
@@ -287,17 +287,17 @@ func TestConcurrentInvocationsDoNotCollide(t *testing.T) {
 
 	const n = 8
 	errs := make(chan error, n)
-	for i := 0; i < n; i++ {
-		go func(i int) {
+	for range n {
+		go func() {
 			_, err := e.Invoke(ctx, c, wasmrt.Request{
 				Op:    "greet",
 				Input: json.RawMessage(`{"name":"x"}`),
 				Opts:  wasmrt.Options{Tool: "greeter", Timeout: 20 * time.Second},
 			})
 			errs <- err
-		}(i)
+		}()
 	}
-	for i := 0; i < n; i++ {
+	for range n {
 		if err := <-errs; err != nil {
 			t.Fatalf("concurrent invocation failed: %v", err)
 		}

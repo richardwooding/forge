@@ -67,7 +67,7 @@ func compileFixture(name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(src)
+	defer func() { _ = os.RemoveAll(src) }()
 
 	body, err := os.ReadFile(filepath.Join("testdata", name, "main.go.txt"))
 	if err != nil {

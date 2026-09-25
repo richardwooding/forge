@@ -1,0 +1,38 @@
+# golangci-lint configuration (v2) for the guest SDK, which is its own module.
+# The bar is zero issues.
+#
+# The package is built twice, for wasm and for the host, and the two halves
+# have different call graphs. Linting only the host build would leave
+# abi_wasm.go unchecked, so CI runs this once per target.
+version: "2"
+linters:
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errorlint
+    - gocritic
+    - misspell
+    - nilerr
+    - revive
+    - unconvert
+    - unparam
+    - usestdlibvars
+  exclusions:
+    rules:
+      # Everything in abi_wasm.go is reachable only from a //go:wasmexport
+      # entry point. The linker treats those as unconditional roots; the
+      # linter cannot see that, so it reports the whole file as dead. The
+      # exclusion is scoped to this one file so that genuinely unused code
+      # anywhere else is still caught.
+      - path: tool/abi_wasm\.go
+        linters:
+          - unused
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+formatters:
+  enable:
+    - gofmt
+    - goimports

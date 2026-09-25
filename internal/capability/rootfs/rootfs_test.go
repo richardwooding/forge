@@ -78,7 +78,7 @@ func TestEscapesAreRefused(t *testing.T) {
 		t.Run(e.name, func(t *testing.T) {
 			f, errno := fsys.OpenFile(e.path, expsys.O_RDONLY, 0)
 			if errno == 0 {
-				defer f.Close()
+				defer func() { _ = f.Close() }()
 				buf := make([]byte, 64)
 				n, _ := f.Read(buf)
 				t.Fatalf("ESCAPED: opened %q and read %q", e.path, buf[:n])
@@ -113,7 +113,7 @@ func TestOrdinaryAccessInsideTheJailWorks(t *testing.T) {
 	if errno != 0 {
 		t.Fatalf("OpenFile: %v", errno)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	buf := make([]byte, 16)
 	n, errno := f.Read(buf)
 	if errno != 0 {
@@ -134,7 +134,7 @@ func TestReadAtEOFIsNotAnError(t *testing.T) {
 	if errno != 0 {
 		t.Fatalf("OpenFile: %v", errno)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, errno := f.Read(make([]byte, 64)); errno != 0 {
 		t.Fatalf("first Read: %v", errno)
 	}
@@ -181,7 +181,7 @@ func TestReadOnlyFileHandleRefusesWrites(t *testing.T) {
 	if errno != 0 {
 		t.Fatalf("OpenFile: %v", errno)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, errno := f.Write([]byte("x")); errno != expsys.EBADF {
 		t.Errorf("Write = %v, want EBADF", errno)
 	}
@@ -230,7 +230,7 @@ func TestReaddirPagesAndTerminates(t *testing.T) {
 	if errno != 0 {
 		t.Fatalf("OpenFile(.): %v", errno)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var names []string
 	for {

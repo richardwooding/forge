@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -135,12 +136,7 @@ func (s Spec) DefaultOp() (OpSpec, bool) {
 
 // HasLabel reports whether the tool carries the label.
 func (s Spec) HasLabel(l string) bool {
-	for _, got := range s.Labels {
-		if got == l {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(s.Labels, l)
 }
 
 // Ref names a tool, optionally pinning a version: "jsonfmt" or "jsonfmt@1.2.0".

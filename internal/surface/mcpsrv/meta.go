@@ -65,7 +65,10 @@ func (m *Manager) addMetaTools(srv *mcp.Server, sel labels.Selector) {
 			Name string `json:"name"`
 		}
 		if err := json.Unmarshal(req.Params.Arguments, &args); err != nil || args.Name == "" {
-			return errorResult("forge_describe_tool needs a tool name"), nil
+			// A result with IsError, not a protocol error: the model can fix
+			// this by supplying a name, and should see it as the tool talking
+			// back rather than as the call having broken.
+			return errorResult("forge_describe_tool needs a tool name"), nil //nolint:nilerr // MCP carries tool errors as results
 		}
 		return m.describeTool(sel, args.Name)
 	})
@@ -129,7 +132,9 @@ func matches(rec store.Record, query string) bool {
 func (m *Manager) describeTool(inView labels.Selector, name string) (*mcp.CallToolResult, error) {
 	rec, err := m.opts.Toolkit.Get(name)
 	if err != nil {
-		return errorResult(fmt.Sprintf("no tool named %q is installed", name)), nil
+		// Likewise a result: the model asked about a tool that is not there,
+		// which it can recover from by searching instead.
+		return errorResult(fmt.Sprintf("no tool named %q is installed", name)), nil //nolint:nilerr // MCP carries tool errors as results
 	}
 
 	var b strings.Builder

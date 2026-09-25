@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"strings"
+
 	"github.com/spf13/pflag"
 
 	"github.com/richardwooding/forge/internal/binding"
@@ -61,14 +63,15 @@ func (v *schemaArray) String() string {
 	if len(v.values) == 0 {
 		return ""
 	}
-	out := "["
+	var out strings.Builder
+	out.WriteString("[")
 	for i, s := range v.values {
 		if i > 0 {
-			out += ","
+			out.WriteString(",")
 		}
-		out += s
+		out.WriteString(s)
 	}
-	return out + "]"
+	return out.String() + "]"
 }
 
 func (v *schemaArray) Set(s string) error {

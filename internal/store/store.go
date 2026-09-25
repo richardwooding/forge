@@ -232,10 +232,15 @@ func (s *Store) GC() (removed int, freed int64, err error) {
 		}
 		info, err := d.Info()
 		if err != nil {
-			return nil
+			// A blob that cannot be stat'd cannot be accounted for; leaving it
+			// is safe, and failing the whole sweep for one unreadable file
+			// would mean no space was ever reclaimed.
+			return nil //nolint:nilerr // GC is best effort by design
 		}
 		if err := os.Remove(path); err != nil {
-			return nil
+			// Another process may hold it, or the store may be read-only.
+			// The next sweep will try again.
+			return nil //nolint:nilerr // GC is best effort by design
 		}
 		removed++
 		freed += info.Size()
@@ -254,21 +259,21 @@ func writeAtomic(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	tmp := f.Name()
-	defer os.Remove(tmp)
+	defer func() { _ = os.Remove(tmp) }()
 
 	if _, err := f.Write(data); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	if err := f.Chmod(perm); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	// Flush before the rename: on a crash the rename could otherwise land
 	// while the contents are still in the page cache, leaving an empty file
 	// where a valid one used to be.
 	if err := f.Sync(); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	if err := f.Close(); err != nil {

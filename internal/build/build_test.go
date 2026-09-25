@@ -96,7 +96,7 @@ func TestBuildProducesARunnableTool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer e.Close(ctx)
+	defer func() { _ = e.Close(ctx) }()
 
 	c, err := e.Compile(ctx, art.Wasm)
 	if err != nil {
@@ -251,8 +251,7 @@ func TestNetworkUseIsExplained(t *testing.T) {
 	// net.Dial compiles for wasip1 and fails at runtime, so this may well
 	// build. What must not happen is a confusing failure with no explanation.
 	if _, err := b.Build(context.Background(), dir); err != nil {
-		var be *build.Error
-		if errors.As(err, &be) {
+		if be, ok := errors.AsType[*build.Error](err); ok {
 			for _, d := range be.Diags {
 				t.Logf("%s\n  hint: %s", d, d.Hint)
 			}

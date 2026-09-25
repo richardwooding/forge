@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -170,7 +171,7 @@ func TestInputJSONAndSetLayer(t *testing.T) {
 	tk := fixture(t)
 	// A flag wins over --set, which wins over --input-json.
 	var doc bytes.Buffer
-	json.NewEncoder(&doc).Encode(map[string]any{"name": "from-json", "times": 1})
+	_ = json.NewEncoder(&doc).Encode(map[string]any{"name": "from-json", "times": 1})
 
 	root := t.TempDir()
 	path := filepath.Join(root, "in.json")
@@ -316,12 +317,7 @@ func TestStoreRecordSurvivesReinstall(t *testing.T) {
 }
 
 func containsString(hay []string, needle string) bool {
-	for _, s := range hay {
-		if s == needle {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(hay, needle)
 }
 
 var _ = store.Record{}

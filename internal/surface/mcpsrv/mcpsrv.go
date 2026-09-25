@@ -21,7 +21,6 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/richardwooding/forge/internal/binding"
 	"github.com/richardwooding/forge/internal/core"
 	"github.com/richardwooding/forge/internal/labels"
 	"github.com/richardwooding/forge/internal/store"
@@ -173,8 +172,10 @@ func toolName(tool, op string, single bool) string {
 
 // buildTool turns one operation into an MCP tool and its handler.
 func (m *Manager) buildTool(rec store.Record, op core.OpSpec, name string) (*mcp.Tool, mcp.ToolHandler, error) {
-	b, err := m.opts.Toolkit.Bound(rec.Spec.Name, op.Name)
-	if err != nil {
+	// Bind now, and discard the result: the value is not needed here, but a
+	// tool that cannot be bound must not be advertised and then fail on the
+	// first call. Failing at registration keeps it out of the list entirely.
+	if _, err := m.opts.Toolkit.Bound(rec.Spec.Name, op.Name); err != nil {
 		return nil, nil, err
 	}
 	// AddTool panics on a nil or non-object input schema, which would take the
@@ -210,7 +211,7 @@ func (m *Manager) buildTool(rec store.Record, op core.OpSpec, name string) (*mcp
 
 	toolName, opName := rec.Spec.Name, op.Name
 	handler := func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return m.invoke(ctx, toolName, opName, b, req.Params.Arguments)
+		return m.invoke(ctx, toolName, opName, req.Params.Arguments)
 	}
 	return t, handler, nil
 }
@@ -239,7 +240,7 @@ func description(rec store.Record, op core.OpSpec) string {
 }
 
 // invoke runs a tool and shapes the reply.
-func (m *Manager) invoke(ctx context.Context, tool, op string, b *binding.Bound, args json.RawMessage) (*mcp.CallToolResult, error) {
+func (m *Manager) invoke(ctx context.Context, tool, op string, args json.RawMessage) (*mcp.CallToolResult, error) {
 	res, err := m.opts.Toolkit.Invoke(ctx, toolkit.Call{Tool: tool, Op: op, Input: args})
 	if err != nil {
 		// A fault is forge refusing or failing, which is a protocol-level
@@ -257,11 +258,11 @@ func (m *Manager) invoke(ctx context.Context, tool, op string, b *binding.Bound,
 			Content: []mcp.Content{&mcp.TextContent{Text: res.Rendition.Message}},
 		}, nil
 	}
-	return renderResult(tool, op, res, b), nil
+	return renderResult(tool, op, res), nil
 }
 
 // renderResult maps a rendition onto MCP content blocks.
-func renderResult(tool, op string, res *toolkit.Result, b *binding.Bound) *mcp.CallToolResult {
+func renderResult(tool, op string, res *toolkit.Result) *mcp.CallToolResult {
 	out := &mcp.CallToolResult{}
 	r := res.Rendition
 

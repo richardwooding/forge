@@ -58,7 +58,7 @@ func TestTableLeavesNoTrailingSpaces(t *testing.T) {
 
 	var buf bytes.Buffer
 	tbl.Render(&buf)
-	for _, line := range strings.Split(strings.TrimRight(buf.String(), "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(buf.String(), "\n"), "\n") {
 		if line != strings.TrimRight(line, " ") {
 			t.Errorf("line has trailing spaces: %q", line)
 		}
@@ -101,11 +101,12 @@ func TestChipColourIsStableForALabel(t *testing.T) {
 	// A label's colour comes from a hash of its name, so "git" looks the same
 	// in every listing and on every machine with nothing to configure.
 	th := New(true, true)
-	if th.Chip("git") != th.Chip("git") {
-		t.Error("the same label rendered two different colours")
+	first, second := th.Chip("git"), th.Chip("git")
+	if first != second {
+		t.Errorf("the same label rendered two different colours: %q then %q", first, second)
 	}
-	if th.Chip("git") == th.Chip("json") {
-		t.Error("two different labels rendered identically; the hash is not spreading them")
+	if other := th.Chip("json"); first == other {
+		t.Errorf("two labels rendered identically (%q); the hash is not spreading them", other)
 	}
 }
 

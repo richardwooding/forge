@@ -57,7 +57,7 @@ func (e *Engine) Describe(ctx context.Context, c *Compiled) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("initialising module: %w", err)
 	}
-	defer mod.Close(ctx)
+	defer func() { _ = mod.Close(ctx) }()
 
 	fn := mod.ExportedFunction(exportDescribe)
 	if fn == nil {
@@ -177,7 +177,7 @@ func (e *Engine) Invoke(ctx context.Context, c *Compiled, req Request) (Response
 	if err != nil {
 		return Response{}, wrapRunError(ctx, err, stderr.Bytes())
 	}
-	defer mod.Close(ctx)
+	defer func() { _ = mod.Close(ctx) }()
 
 	fn := mod.ExportedFunction(exportInvoke)
 	if fn == nil {

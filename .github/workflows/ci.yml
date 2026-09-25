@@ -59,3 +59,17 @@ jobs:
       - uses: golangci/golangci-lint-action@v9
         with:
           version: latest
+      # The sdk is a separate module, so the root config does not reach it, and
+      # it is built for two targets whose call graphs differ. Linting only the
+      # host build would leave the wasm half unchecked.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+          working-directory: sdk
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+          working-directory: sdk
+        env:
+          GOOS: wasip1
+          GOARCH: wasm

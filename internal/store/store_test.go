@@ -68,7 +68,7 @@ func TestIdenticalModulesShareOneBlob(t *testing.T) {
 	}
 
 	var blobs int
-	filepath.WalkDir(filepath.Join(s.Dir(), "blobs"), func(_ string, d os.DirEntry, err error) error {
+	_ = filepath.WalkDir(filepath.Join(s.Dir(), "blobs"), func(_ string, d os.DirEntry, err error) error {
 		if err == nil && !d.IsDir() {
 			blobs++
 		}
@@ -236,7 +236,7 @@ func TestWriteIsAtomic(t *testing.T) {
 	// would lose an installed tool.
 	s := open(t)
 	put(t, s, "hello", []byte("v1"))
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		put(t, s, "hello", []byte("v1"))
 		if _, err := s.Get("hello"); err != nil {
 			t.Fatalf("record unreadable after rewrite %d: %v", i, err)

@@ -112,14 +112,14 @@ func TestHostileGuestCannotEscapeTheMount(t *testing.T) {
 		WithCoreFeatures(api.CoreFeaturesV2).
 		WithCloseOnContextDone(true).
 		WithMemoryLimitPages(256))
-	defer rt.Close(ctx)
+	defer func() { _ = rt.Close(ctx) }()
 	wasi_snapshot_preview1.MustInstantiate(ctx, rt)
 
 	root, err := os.OpenRoot(filepath.Join(dir, "work"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 
 	fsc, ok := wazero.NewFSConfig().(sysfs.FSConfig)
 	if !ok {

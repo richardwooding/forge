@@ -14,6 +14,7 @@ package labels
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -47,12 +48,7 @@ func (noneSel) String() string        { return "!*" }
 type labelSel string
 
 func (l labelSel) Matches(labels []string) bool {
-	for _, got := range labels {
-		if got == string(l) {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(labels, string(l))
 }
 func (l labelSel) String() string { return string(l) }
 

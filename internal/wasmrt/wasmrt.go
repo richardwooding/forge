@@ -330,8 +330,7 @@ func buildFSConfig(mounts []Mount) (wazero.FSConfig, error) {
 // exitCode extracts a guest exit status, reporting whether the error was an
 // ordinary exit rather than a failure.
 func exitCode(err error) (int, bool) {
-	var ee *wsys.ExitError
-	if errors.As(err, &ee) {
+	if ee, ok := errors.AsType[*wsys.ExitError](err); ok {
 		return int(ee.ExitCode()), true
 	}
 	return 0, false

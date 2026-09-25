@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -100,11 +101,9 @@ func originGuard(allowed []string, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		for _, ok := range allowed {
-			if origin == ok {
-				next.ServeHTTP(w, r)
-				return
-			}
+		if slices.Contains(allowed, origin) {
+			next.ServeHTTP(w, r)
+			return
 		}
 		http.Error(w, fmt.Sprintf("origin %q is not allowed; start forge with --allow-origin if this is intended", origin),
 			http.StatusForbidden)

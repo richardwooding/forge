@@ -39,7 +39,7 @@ func run() int {
 		fmt.Fprintln(os.Stderr, "forge:", err)
 		return 2
 	}
-	defer tk.Close(context.Background())
+	defer func() { _ = tk.Close(context.Background()) }()
 
 	selector, resolvedView, err := tk.Views().Resolve(viewName, selectorExpr)
 	if err != nil {

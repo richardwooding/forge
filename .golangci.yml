@@ -1,3 +1,12 @@
+# golangci-lint configuration (v2). The bar is zero issues.
+#
+# One exclusion, with its reason: forge writes its output to injected
+# io.Writers so that tests can capture it, which defeats errcheck's built-in
+# exemption for fmt.Fprint* to os.Stdout and os.Stderr. A failed write to the
+# terminal is not something a CLI can do anything about.
+#
+# Everything else errcheck finds is handled at the call site with an explicit
+# discard, so that a deliberate ignore reads differently from an oversight.
 version: "2"
 linters:
   enable:
@@ -12,6 +21,11 @@ linters:
     - unparam
     - usestdlibvars
   settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
     revive:
       rules:
         - name: exported

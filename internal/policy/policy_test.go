@@ -81,7 +81,7 @@ func TestAllowOnceIsNotRemembered(t *testing.T) {
 	ask := &answering{answer: AllowOnce}
 	r := &Resolver{Policy: p, Prompter: ask}
 
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		set, err := r.Resolve(context.Background(), "fetch", "", netRequest())
 		if err != nil {
 			t.Fatal(err)

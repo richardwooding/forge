@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -136,7 +137,7 @@ func (b *Builder) Build(ctx context.Context, src string) (*Artifact, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(work)
+	defer func() { _ = os.RemoveAll(work) }()
 
 	srcRoot := src
 	if !info.IsDir() {
@@ -181,7 +182,10 @@ func (b *Builder) Build(ctx context.Context, src string) (*Artifact, error) {
 	stdout, runErr := cmd.Output()
 	if runErr != nil {
 		var stderr string
-		if ee, ok := runErr.(*exec.ExitError); ok {
+		// errors.As rather than a type assertion: cmd.Output wraps its error
+		// in some paths, and losing stderr here would throw away the compiler
+		// output this whole error path exists to report.
+		if ee, ok := errors.AsType[*exec.ExitError](runErr); ok {
 			stderr = string(ee.Stderr)
 		}
 		return nil, b.buildError(ctx, stdout, stderr, work, srcRoot, runErr)

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -193,12 +194,7 @@ func (a *App) cmdLabel() *cobra.Command {
 }
 
 func containsStr(hay []string, needle string) bool {
-	for _, s := range hay {
-		if s == needle {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(hay, needle)
 }
 
 func removeStr(hay []string, needle string) []string {
