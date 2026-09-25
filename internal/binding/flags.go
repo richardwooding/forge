@@ -149,7 +149,8 @@ func walkValue(fs *FlagSet, s *jsonschema.Schema, name, pointer string, required
 		return
 	}
 
-	switch s.Type {
+	typ, _ := effectiveType(s)
+	switch typ {
 	case "object":
 		walkObject(fs, s, name, pointer)
 	case "array":
@@ -161,7 +162,8 @@ func walkValue(fs *FlagSet, s *jsonschema.Schema, name, pointer string, required
 			})
 			return
 		}
-		kind, ok := scalarKind(item.Type)
+		itemType, _ := effectiveType(item)
+		kind, ok := scalarKind(itemType)
 		if !ok {
 			fs.NotExpressible = append(fs.NotExpressible, NotExpressible{
 				Pointer: pointer,
@@ -181,11 +183,11 @@ func walkValue(fs *FlagSet, s *jsonschema.Schema, name, pointer string, required
 			Reason:  "no declared type",
 		})
 	default:
-		kind, ok := scalarKind(s.Type)
+		kind, ok := scalarKind(typ)
 		if !ok {
 			fs.NotExpressible = append(fs.NotExpressible, NotExpressible{
 				Pointer: pointer,
-				Reason:  fmt.Sprintf("type %q has no flag representation", s.Type),
+				Reason:  fmt.Sprintf("type %q has no flag representation", typ),
 			})
 			return
 		}
@@ -197,13 +199,47 @@ func walkValue(fs *FlagSet, s *jsonschema.Schema, name, pointer string, required
 	}
 }
 
+// effectiveType reduces a schema's declared type to the single type a flag
+// would have to parse, reporting false when there is genuinely more than one.
+//
+// The nullable case is not a curiosity, it is the common one: jsonschema.For
+// emits ["null", "array"] for every Go slice and ["null", "string"] for every
+// pointer, because a nil value marshals to null. Reading that as "several
+// possible types" would make every slice and every optional field in every
+// tool unreachable from the command line -- which is precisely what happened
+// before an end-to-end test caught it, since the unit tests here used
+// hand-written schemas that never had the null.
+//
+// A flag either supplies a value of the non-null type or is absent, so for
+// binding purposes the null adds nothing.
+func effectiveType(s *jsonschema.Schema) (string, bool) {
+	if s.Type != "" {
+		return s.Type, true
+	}
+	switch len(s.Types) {
+	case 0:
+		return "", true // no declared type; the caller decides what that means
+	case 1:
+		return s.Types[0], true
+	case 2:
+		if s.Types[0] == "null" {
+			return s.Types[1], true
+		}
+		if s.Types[1] == "null" {
+			return s.Types[0], true
+		}
+	}
+	return "", false
+}
+
 // combinatorReason names the keyword that makes a schema inexpressible as
 // flags, or "" when there is none. These are the constructs where one value can
 // satisfy several shapes, and a flag has only one parse.
 func combinatorReason(s *jsonschema.Schema) string {
-	switch {
-	case len(s.Types) > 0:
+	if _, ok := effectiveType(s); !ok {
 		return "several possible types"
+	}
+	switch {
 	case len(s.OneOf) > 0:
 		return "oneOf: the accepted shape depends on the value"
 	case len(s.AnyOf) > 0:
@@ -233,8 +269,8 @@ func scalarKind(t string) (FlagKind, bool) {
 }
 
 func itemTypeName(s *jsonschema.Schema) string {
-	if s.Type != "" {
-		return s.Type
+	if t, _ := effectiveType(s); t != "" {
+		return t
 	}
 	return "untyped values"
 }

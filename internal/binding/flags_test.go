@@ -236,3 +236,87 @@ func TestPropertyNamesNeedingPointerEscapingRoundTrip(t *testing.T) {
 		t.Errorf("document = %v, want the odd property names preserved", got)
 	}
 }
+
+// TestNullableTypesFromGoStructsAreExpressible pins the shape jsonschema.For
+// actually produces, as opposed to the hand-written schemas the other tests
+// use.
+//
+// A Go slice becomes ["null","array"] and a pointer becomes ["null","string"],
+// because a nil value marshals to null. Reading that as a genuine union made
+// every slice and every optional field in every tool unreachable from the
+// command line, and no unit test here noticed, because they all wrote
+// Type: "array" by hand. An end-to-end test caught it.
+func TestNullableTypesFromGoStructsAreExpressible(t *testing.T) {
+	s := &jsonschema.Schema{
+		Type: "object",
+		Properties: map[string]*jsonschema.Schema{
+			"tags": {Types: []string{"null", "array"}, Items: &jsonschema.Schema{Type: "string"}},
+			"note": {Types: []string{"null", "string"}},
+			"n":    {Types: []string{"integer", "null"}}, // order must not matter
+			"nested": {Types: []string{"null", "object"}, Properties: map[string]*jsonschema.Schema{
+				"inner": {Types: []string{"null", "string"}},
+			}},
+		},
+	}
+	fs := BuildFlags(s)
+	if !fs.Complete() {
+		t.Fatalf("nullable fields reported as inexpressible: %+v", fs.NotExpressible)
+	}
+
+	want := map[string]struct {
+		kind       FlagKind
+		repeatable bool
+	}{
+		"tags":         {FlagString, true},
+		"note":         {FlagString, false},
+		"n":            {FlagInteger, false},
+		"nested.inner": {FlagString, false},
+	}
+	if len(fs.Flags) != len(want) {
+		t.Fatalf("got %d flags, want %d: %+v", len(fs.Flags), len(want), fs.Flags)
+	}
+	for _, f := range fs.Flags {
+		w, ok := want[f.Name]
+		if !ok {
+			t.Errorf("unexpected flag %q", f.Name)
+			continue
+		}
+		if f.Kind != w.kind || f.Repeatable != w.repeatable {
+			t.Errorf("flag %q = (%s, repeatable %v), want (%s, %v)", f.Name, f.Kind, f.Repeatable, w.kind, w.repeatable)
+		}
+	}
+}
+
+// TestGenuineUnionsAreStillRefused makes sure the nullable allowance did not
+// quietly accept every union.
+func TestGenuineUnionsAreStillRefused(t *testing.T) {
+	fs := BuildFlags(&jsonschema.Schema{
+		Type: "object",
+		Properties: map[string]*jsonschema.Schema{
+			"x": {Types: []string{"string", "integer"}},
+		},
+	})
+	if fs.Complete() {
+		t.Fatal("a string-or-integer field was accepted as a flag")
+	}
+	if !strings.Contains(fs.NotExpressible[0].Reason, "several possible types") {
+		t.Errorf("reason = %q", fs.NotExpressible[0].Reason)
+	}
+}
+
+// TestNullIsAcceptedForANullableField covers the validation half: an explicitly
+// null value must not be reported as a type error when the schema allows it.
+func TestNullIsAcceptedForANullableField(t *testing.T) {
+	b := mustBind(t, &jsonschema.Schema{
+		Type: "object",
+		Properties: map[string]*jsonschema.Schema{
+			"note": {Types: []string{"null", "string"}},
+		},
+	})
+	if _, fault := Normalize(b, []byte(`{"note":null}`)); fault != nil {
+		t.Errorf("null rejected for a nullable field: %v", fault)
+	}
+	if _, fault := Normalize(b, []byte(`{"note":"x"}`)); fault != nil {
+		t.Errorf("string rejected for a nullable field: %v", fault)
+	}
+}

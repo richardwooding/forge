@@ -93,8 +93,9 @@ func Normalize(b *Bound, raw json.RawMessage) (json.RawMessage, *Fault) {
 	// string -- and, worse, would accept a number where a string was required.
 	// The original instance, with its digits intact, is what the tool receives.
 	if err := b.Resolved.Validate(forValidation(inst)); err != nil {
-		f := b.fault(FaultInvalidInput, "%s", cleanValidationMessage(err))
-		f.Violations = violations(b.Op.Input, inst)
+		vs := violations(b.Op.Input, inst)
+		f := b.fault(FaultInvalidInput, "%s", summarise(vs, err))
+		f.Violations = vs
 		f.Cause = err
 		return nil, f
 	}
@@ -129,15 +130,28 @@ func (b *Bound) fault(code FaultCode, format string, args ...any) *Fault {
 	return f
 }
 
-// cleanValidationMessage trims the schema dump jsonschema-go appends to its
-// validation errors. The schema is already available to the caller through
-// Bound, and repeating it turns a one-line error into a screenful.
-func cleanValidationMessage(err error) string {
-	msg := err.Error()
-	if i := strings.Index(msg, "\nschema:"); i >= 0 {
-		msg = msg[:i]
+// summarise turns a validation failure into a sentence.
+//
+// jsonschema-go's own message is accurate and reads like a library talking to
+// itself: `validating root: required: missing properties: ["name"]`. When the
+// pre-pass located the problems, their own wording is both shorter and aimed at
+// the person who typed something wrong. The library message is the fallback for
+// the cases the pre-pass does not model, with the schema dump it appends
+// trimmed off -- the schema is available through Bound, and repeating it turns
+// a one-line error into a screenful.
+func summarise(vs []Violation, err error) string {
+	switch len(vs) {
+	case 0:
+		msg := err.Error()
+		if i := strings.Index(msg, "\nschema:"); i >= 0 {
+			msg = msg[:i]
+		}
+		return strings.TrimSpace(msg)
+	case 1:
+		return fmt.Sprintf("%s: %s", strings.TrimPrefix(vs[0].Pointer, "/"), vs[0].Message)
+	default:
+		return fmt.Sprintf("%d problems with the input", len(vs))
 	}
-	return strings.TrimSpace(msg)
 }
 
 // violations is a best-effort pre-pass producing JSON Pointers for input
@@ -158,8 +172,8 @@ func violations(s *jsonschema.Schema, inst any) []Violation {
 		if s == nil || inst == nil {
 			return
 		}
-		if t := s.Type; t != "" {
-			if got, ok := jsonTypeOf(inst); ok && !typeMatches(t, got, inst) {
+		if t, _ := effectiveType(s); t != "" {
+			if got, ok := jsonTypeOf(inst); ok && got != "null" && !typeMatches(t, got, inst) {
 				out = append(out, Violation{
 					Pointer: ptr(pointer),
 					Message: fmt.Sprintf("expected %s, got %s", t, got),

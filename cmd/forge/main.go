@@ -1,0 +1,66 @@
+// Command forge is a multitool that builds itself.
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/richardwooding/forge/internal/labels"
+	"github.com/richardwooding/forge/internal/surface/cli"
+	"github.com/richardwooding/forge/internal/toolkit"
+)
+
+func main() {
+	os.Exit(run())
+}
+
+func run() int {
+	// Ctrl-C cancels the context, which closes any running wasm module: a tool
+	// looping forever is stopped by the runtime, not by asking it politely.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// The command tree depends on the view, and cobra parses flags only while
+	// executing the tree it was given, so the view has to be read from the
+	// arguments first.
+	viewName, selectorExpr := cli.PreScan(os.Args)
+
+	selector := labels.All
+	if selectorExpr != "" {
+		var err error
+		selector, err = labels.Parse(selectorExpr)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "forge:", err)
+			return 2
+		}
+	}
+
+	tk, err := toolkit.New(ctx, toolkit.Config{
+		SDKReplace: os.Getenv("FORGE_SDK_DIR"),
+		Offline:    os.Getenv("FORGE_OFFLINE") != "",
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "forge:", err)
+		return 2
+	}
+	defer tk.Close(context.Background())
+
+	root, err := cli.New(cli.Options{
+		Toolkit:  tk,
+		Selector: selector,
+		ViewName: viewName,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "forge:", err)
+		return 2
+	}
+
+	if err := root.ExecuteContext(ctx); err != nil {
+		cli.Render(os.Stderr, err)
+		return cli.ExitCode(err)
+	}
+	return 0
+}
