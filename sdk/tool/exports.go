@@ -51,11 +51,6 @@ type opJSON struct {
 	Annotations     annotations `json:"annotations,omitzero"`
 }
 
-//go:wasmexport forge_describe
-func forgeDescribe() uint64 {
-	return retain(describe())
-}
-
 func describe() []byte {
 	if registered == nil {
 		return errorManifest("no tool registered: call tool.Register from a package-level var or init, not from main")
@@ -107,11 +102,6 @@ func errorManifest(msg string) []byte {
 		Error string `json:"forgeError"`
 	}{msg})
 	return b
-}
-
-//go:wasmexport forge_invoke
-func forgeInvoke() uint64 {
-	return retain(invoke(readCall()))
 }
 
 func invoke(raw []byte) []byte {
