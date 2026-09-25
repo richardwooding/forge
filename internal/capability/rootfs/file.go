@@ -1,6 +1,7 @@
 package rootfs
 
 import (
+	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -133,7 +134,7 @@ func (x *file) Readdir(n int) ([]expsys.Dirent, expsys.Errno) {
 // would turn a normal end-of-file into a failure inside the guest.
 func readErrno(n int, err error) expsys.Errno {
 	switch {
-	case err == nil, err == io.EOF:
+	case err == nil, errors.Is(err, io.EOF):
 		return 0
 	case n > 0:
 		return 0

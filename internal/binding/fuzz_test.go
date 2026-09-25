@@ -2,6 +2,7 @@ package binding
 
 import (
 	"encoding/json"
+	"math"
 	"strconv"
 	"testing"
 
@@ -42,7 +43,7 @@ func FuzzFlagRoundTrip(f *testing.F) {
 	f.Add("hello", int64(3), 1.5, true, "inner", "a", "b")
 	f.Add("", int64(0), 0.0, false, "", "", "")
 	// The pflag StringSlice trap, and the 2^53 boundary.
-	f.Add("a,b,c", int64(9007199254740993), -0.0, true, "x,y", "p,q", "r")
+	f.Add("a,b,c", int64(9007199254740993), math.Copysign(0, -1), true, "x,y", "p,q", "r")
 	f.Add("naïve 🌍", int64(-9007199254740993), 1e308, false, "\t\n", `"quoted"`, `back\slash`)
 	f.Add("--looks-like-a-flag", int64(1), 0.1, true, "=equals=", " leading", "trailing ")
 
