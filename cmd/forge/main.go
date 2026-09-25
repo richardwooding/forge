@@ -28,19 +28,12 @@ func run() int {
 	// arguments first.
 	viewName, selectorExpr := cli.PreScan(os.Args)
 
-	selector := labels.All
-	if selectorExpr != "" {
-		var err error
-		selector, err = labels.Parse(selectorExpr)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "forge:", err)
-			return 2
-		}
-	}
-
 	tk, err := toolkit.New(ctx, toolkit.Config{
 		SDKReplace: os.Getenv("FORGE_SDK_DIR"),
 		Offline:    os.Getenv("FORGE_OFFLINE") != "",
+		// On a terminal this asks; anywhere else it denies, because a prompt
+		// written to a pipe is a hang rather than a question.
+		Prompter: cli.TerminalPrompter{},
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "forge:", err)
@@ -48,10 +41,19 @@ func run() int {
 	}
 	defer tk.Close(context.Background())
 
+	selector, resolvedView, err := tk.Views().Resolve(viewName, selectorExpr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "forge:", err)
+		return 2
+	}
+	if selector == nil {
+		selector = labels.All
+	}
+
 	root, err := cli.New(cli.Options{
 		Toolkit:  tk,
 		Selector: selector,
-		ViewName: viewName,
+		ViewName: resolvedView,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "forge:", err)

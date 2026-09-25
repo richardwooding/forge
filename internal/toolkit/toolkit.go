@@ -21,7 +21,9 @@ import (
 	"github.com/richardwooding/forge/internal/core"
 	"github.com/richardwooding/forge/internal/labels"
 	"github.com/richardwooding/forge/internal/manifest"
+	"github.com/richardwooding/forge/internal/policy"
 	"github.com/richardwooding/forge/internal/store"
+	"github.com/richardwooding/forge/internal/view"
 	"github.com/richardwooding/forge/internal/wasmrt"
 	"github.com/richardwooding/forge/internal/wasmrt/hostabi"
 )
@@ -39,6 +41,12 @@ type Config struct {
 
 	// InvokeTimeout bounds one tool call.
 	InvokeTimeout time.Duration
+
+	// Prompter asks the user about capabilities. A nil Prompter denies
+	// everything, which is the right default for a server or a script: running
+	// forge non-interactively must not silently grant what it would otherwise
+	// have asked about.
+	Prompter policy.Prompter
 }
 
 // Toolkit installs, lists and runs tools.
@@ -47,6 +55,9 @@ type Toolkit struct {
 	store   *store.Store
 	builder *build.Builder
 	engine  *wasmrt.Engine
+	views   *view.Store
+	policy  *policy.Policy
+	floor   policy.Floor
 
 	mu    sync.RWMutex
 	bound map[string]map[string]*binding.Bound // tool -> op -> bound
@@ -83,14 +94,39 @@ func New(ctx context.Context, cfg Config) (*Toolkit, error) {
 		return nil, err
 	}
 
+	vs, err := view.Open(cfg.Paths.Config)
+	if err != nil {
+		_ = e.Close(ctx)
+		return nil, err
+	}
+	pol, err := policy.Open(cfg.Paths.Config)
+	if err != nil {
+		_ = e.Close(ctx)
+		return nil, err
+	}
+
 	return &Toolkit{
 		cfg:     cfg,
 		store:   st,
 		builder: b,
 		engine:  e,
-		bound:   map[string]map[string]*binding.Bound{},
+		views:   vs,
+		policy:  pol,
+		// forge's own directories are on the floor: a tool that could write
+		// them could grant itself anything on the next run.
+		floor: policy.DefaultFloor(cfg.Paths.Data, cfg.Paths.Config, cfg.Paths.Cache),
+		bound: map[string]map[string]*binding.Bound{},
 	}, nil
 }
+
+// Views exposes the view store.
+func (tk *Toolkit) Views() *view.Store { return tk.views }
+
+// Policy exposes the recorded capability decisions.
+func (tk *Toolkit) Policy() *policy.Policy { return tk.policy }
+
+// Floor is the set of things no tool may be granted.
+func (tk *Toolkit) Floor() policy.Floor { return tk.floor }
 
 // Close releases the runtime.
 func (tk *Toolkit) Close(ctx context.Context) error { return tk.engine.Close(ctx) }
@@ -320,6 +356,18 @@ func (tk *Toolkit) Invoke(ctx context.Context, c Call) (*Result, error) {
 		return nil, fault
 	}
 
+	grants, err := (&policy.Resolver{
+		Policy:   tk.policy,
+		Floor:    tk.floor,
+		Prompter: tk.cfg.Prompter,
+	}).Resolve(ctx, rec.Spec.Name, rec.Spec.Summary, rec.Spec.Requires)
+	if err != nil {
+		// A refusal is the user's decision, not a malfunction, so it is
+		// reported as an input-level fault rather than an internal one.
+		return nil, &binding.Fault{Code: binding.FaultInvalidInput, Tool: c.Tool, Op: c.Op,
+			Message: err.Error(), Cause: err}
+	}
+
 	wasm, err := tk.store.Blob(rec.WasmDigest)
 	if err != nil {
 		return nil, internalFault(c.Tool, err)
@@ -334,7 +382,7 @@ func (tk *Toolkit) Invoke(ctx context.Context, c Call) (*Result, error) {
 		Input: input,
 		Opts: wasmrt.Options{
 			Tool:       c.Tool,
-			Grants:     rec.GrantSet(),
+			Grants:     grants,
 			Timeout:    tk.cfg.InvokeTimeout,
 			OnLog:      c.OnLog,
 			OnProgress: c.OnProgress,
