@@ -1,0 +1,84 @@
+// Command greeter is the fixture tool for wasmrt's integration test. It
+// exercises every shape of the guest contract: JSON and text results, a
+// handler that fails, a handler that panics, logging and progress.
+package main
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/richardwooding/forge/sdk/tool"
+)
+
+type GreetArgs struct {
+	Name  string `json:"name" jsonschema:"who to greet"`
+	Times int    `json:"times,omitempty" jsonschema:"how many times"`
+	Loud  bool   `json:"loud,omitempty" jsonschema:"shout it"`
+}
+
+type GreetResult struct {
+	Greeting string `json:"greeting"`
+	Length   int    `json:"length"`
+}
+
+type EchoArgs struct {
+	Text string `json:"text"`
+}
+
+type BigArgs struct {
+	N int64 `json:"n" jsonschema:"a number that must survive the round trip"`
+}
+
+type BigResult struct {
+	N int64 `json:"n"`
+}
+
+var _ = tool.Register(
+	tool.Spec{
+		Name:    "greeter",
+		Version: "1.0.0",
+		Summary: "Greets people",
+		Labels:  []string{"demo", "text"},
+	},
+	tool.Op("greet", greet, tool.Summary("Greet someone"), tool.ReadOnly()),
+	tool.Op("echo", echo, tool.Text(), tool.Summary("Echo the input")),
+	tool.Op("fail", fail, tool.Summary("Always fails")),
+	tool.Op("boom", boom, tool.Summary("Always panics")),
+	tool.Op("chatty", chatty, tool.Text(), tool.Summary("Logs and reports progress")),
+	tool.Op("big", big, tool.Summary("Round-trips a large integer")),
+)
+
+func main() {}
+
+func greet(ctx *tool.Context, a GreetArgs) (GreetResult, error) {
+	if a.Times <= 0 {
+		a.Times = 1
+	}
+	g := strings.TrimSpace(strings.Repeat("Hello, "+a.Name+"! ", a.Times))
+	if a.Loud {
+		g = strings.ToUpper(g)
+	}
+	return GreetResult{Greeting: g, Length: len(g)}, nil
+}
+
+func echo(ctx *tool.Context, a EchoArgs) (string, error) { return a.Text, nil }
+
+func fail(ctx *tool.Context, a EchoArgs) (string, error) {
+	return "", fmt.Errorf("this operation always fails: %s", a.Text)
+}
+
+func boom(ctx *tool.Context, a EchoArgs) (string, error) {
+	panic("deliberate panic: " + a.Text)
+}
+
+func chatty(ctx *tool.Context, a EchoArgs) (string, error) {
+	ctx.Infof("starting work on %q", a.Text)
+	for i := 1; i <= 3; i++ {
+		ctx.Progress(int64(i), 3, fmt.Sprintf("step %d", i))
+	}
+	ctx.Warnf("nearly done")
+	fmt.Println("this went to stdout")
+	return "done", nil
+}
+
+func big(ctx *tool.Context, a BigArgs) (BigResult, error) { return BigResult{N: a.N}, nil }
