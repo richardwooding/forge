@@ -45,6 +45,16 @@ type Options struct {
 	// agent discover tools outside its view without those tools' schemas being
 	// in its context all along.
 	MetaTools bool
+
+	// AllowInstall adds forge_add_tool, which compiles Go source and installs
+	// it live -- the MCP equivalent of `forge tool add`. It asks the connected
+	// human to approve through MCP elicitation before anything is written to
+	// the store, and refuses outright when there is no one to ask, the same
+	// rule a nil Prompter applies to capability grants.
+	//
+	// Off by default. This is a bigger grant than any single capability: it
+	// runs the Go toolchain, unsandboxed, over whatever source it is given.
+	AllowInstall bool
 }
 
 // Manager builds and caches one server per view.
@@ -102,6 +112,9 @@ func (m *Manager) Server(key string, sel labels.Selector) (*mcp.Server, error) {
 	}
 	if m.opts.MetaTools {
 		m.addMetaTools(srv, sel)
+	}
+	if m.opts.AllowInstall {
+		m.addInstallTool(srv, sel)
 	}
 	return srv, nil
 }

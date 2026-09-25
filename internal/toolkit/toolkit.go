@@ -155,13 +155,38 @@ type AddTimings struct {
 	Store    time.Duration
 }
 
+// AddOption adjusts one call to Add.
+type AddOption func(*addOptions)
+
+type addOptions struct {
+	approve func(ctx context.Context, loaded *manifest.Loaded) error
+}
+
+// WithApprove asks approve once the module has described itself but before
+// anything is written to the store. An error aborts the install and leaves no
+// trace, the same guarantee Add already gives when a module describes itself
+// badly.
+//
+// CLI's `tool add` passes none: a person who typed the command has already
+// approved running it. A surface that installs on someone else's say-so --
+// an MCP client acting for a model -- is expected to use this to put a human
+// in the loop before anything is committed.
+func WithApprove(approve func(ctx context.Context, loaded *manifest.Loaded) error) AddOption {
+	return func(o *addOptions) { o.approve = approve }
+}
+
 // Add builds a tool from source and installs it.
 //
 // The steps are: compile the source, compile the wasm, ask the module to
 // describe itself with no capabilities at all, validate what it said, and only
 // then write anything to the store. Nothing is installed until every step has
 // succeeded, so a tool that describes itself badly leaves no trace.
-func (tk *Toolkit) Add(ctx context.Context, src string) (*AddResult, error) {
+func (tk *Toolkit) Add(ctx context.Context, src string, opts ...AddOption) (*AddResult, error) {
+	var o addOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+
 	var t AddTimings
 
 	start := time.Now()
@@ -191,6 +216,12 @@ func (tk *Toolkit) Add(ctx context.Context, src string) (*AddResult, error) {
 		return nil, err
 	}
 	t.Describe = time.Since(start)
+
+	if o.approve != nil {
+		if err := o.approve(ctx, loaded); err != nil {
+			return nil, err
+		}
+	}
 
 	start = time.Now()
 	existing, getErr := tk.store.Get(loaded.Spec.Name)

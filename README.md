@@ -41,6 +41,13 @@ $ forge mcp                     # stdio, for an agent
 $ forge mcp --http 127.0.0.1:7777   # /mcp/<view> serves a named view
 ```
 
+`forge mcp --allow-install` goes a step further: it adds `forge_add_tool`, so an
+agent can compile and install a tool without leaving MCP. Nothing reaches the
+store until a human approves it through an MCP elicitation naming the tool and
+what it wants — and if the connected client cannot be asked, forge refuses
+rather than treating silence as a yes. It is off by default; see Security below
+for the trust decision it does not remove.
+
 ## Writing a tool
 
 A tool is an ordinary Go program that registers itself. forge compiles it,
@@ -99,6 +106,11 @@ the combination is what carries the risk — and remembers your answer.
 That is a trust decision equivalent to running `go build` on a stranger's
 repository: **the wasm sandbox protects invocation, not installation.** Only add
 tools whose source you would have been willing to build anyway.
+
+`forge mcp --allow-install` makes the same trust decision on an agent's say-so
+instead of a typed command. The human-in-the-loop elicitation it requires
+guards whether a tool is kept and made callable — it cannot undo the fact that
+building it already ran the Go toolchain, unsandboxed, over the source.
 
 ## Licence
 
