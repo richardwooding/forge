@@ -3,11 +3,11 @@ package cli
 import (
 	"fmt"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
 	"github.com/richardwooding/forge/internal/labels"
+	"github.com/richardwooding/forge/internal/ui"
 )
 
 func (a *App) cmdView() *cobra.Command {
@@ -31,8 +31,8 @@ func (a *App) cmdView() *cobra.Command {
 				return nil
 			}
 			active := a.tk.Views().ActiveName()
-			tw := tabwriter.NewWriter(c.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "\tNAME\tSELECTOR\tTOOLS")
+			th := ui.ForWriter(c.OutOrStdout())
+			tbl := th.NewTable("", "NAME", "SELECTOR", "TOOLS")
 			for _, v := range views {
 				marker := " "
 				if v.Name == active {
@@ -44,9 +44,10 @@ func (a *App) cmdView() *cobra.Command {
 						n = fmt.Sprint(len(recs))
 					}
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", marker, v.Name, v.Selector, n)
+				tbl.Row(marker, th.Name.Render(v.Name), th.Subtle.Render(v.Selector), n)
 			}
-			return tw.Flush()
+			tbl.Render(c.OutOrStdout())
+			return nil
 		},
 	}
 

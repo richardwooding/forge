@@ -3,11 +3,11 @@ package cli
 import (
 	"fmt"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
 	"github.com/richardwooding/forge/internal/capability"
+	"github.com/richardwooding/forge/internal/ui"
 )
 
 func (a *App) cmdGrant() *cobra.Command {
@@ -27,8 +27,8 @@ func (a *App) cmdGrant() *cobra.Command {
 				fmt.Fprintln(c.OutOrStdout(), "no tool has asked for anything yet")
 				return nil
 			}
-			tw := tabwriter.NewWriter(c.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "TOOL\tGRANTED")
+			th := ui.ForWriter(c.OutOrStdout())
+			tbl := th.NewTable("TOOL", "GRANTED")
 			for _, t := range tools {
 				set := a.tk.Policy().Granted(t)
 				var parts []string
@@ -38,9 +38,10 @@ func (a *App) cmdGrant() *cobra.Command {
 				if len(parts) == 0 {
 					parts = append(parts, "nothing (refused)")
 				}
-				fmt.Fprintf(tw, "%s\t%s\n", t, strings.Join(parts, " "))
+				tbl.Row(th.Name.Render(t), strings.Join(parts, " "))
 			}
-			return tw.Flush()
+			tbl.Render(c.OutOrStdout())
+			return nil
 		},
 	}
 

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -12,6 +11,7 @@ import (
 	"github.com/richardwooding/forge/internal/capability"
 	"github.com/richardwooding/forge/internal/labels"
 	"github.com/richardwooding/forge/internal/store"
+	"github.com/richardwooding/forge/internal/ui"
 )
 
 func (a *App) addManageCommands(root *cobra.Command) {
@@ -50,23 +50,36 @@ func (a *App) cmdTool() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			th := ui.ForWriter(c.OutOrStdout())
+			out := c.OutOrStdout()
+			t := res.Timings
+			rec := res.Record
+
+			fmt.Fprintln(out, th.Step("compile", "Go → wasip1 reactor", round(t.Build)))
+			fmt.Fprintln(out, th.Step("load", "wasm module", round(t.Compile)))
+			fmt.Fprintln(out, th.Step("describe", "with no capabilities", round(t.Describe)))
+			fmt.Fprintln(out, th.Step("store", "content addressed", round(t.Store)))
+
 			verb := "installed"
 			if res.Replaced {
 				verb = "updated"
 			}
-			t := res.Timings
-			fmt.Fprintf(c.OutOrStdout(), "%s %s", verb, res.Record.Spec.Name)
-			if v := res.Record.Spec.Version; v != "" {
-				fmt.Fprintf(c.OutOrStdout(), " %s", v)
+			name := th.Name.Render(rec.Spec.Name)
+			if v := rec.Spec.Version; v != "" {
+				name += " " + th.Subtle.Render(v)
 			}
-			fmt.Fprintf(c.OutOrStdout(), "\n  build %s · compile %s · describe %s · store %s\n",
-				round(t.Build), round(t.Compile), round(t.Describe), round(t.Store))
-			if l := res.Record.Labels(); len(l) > 0 {
-				fmt.Fprintf(c.OutOrStdout(), "  labels: %s\n", strings.Join(l, ", "))
-			}
-			if reqs := res.Record.Spec.Requires; len(reqs) > 0 {
-				fmt.Fprintf(c.OutOrStdout(), "  wants: %s\n", describeRequests(reqs))
-				fmt.Fprintf(c.OutOrStdout(), "  you will be asked before it uses these\n")
+			fmt.Fprintf(out, "\n%s %s  %s\n", verb, name, th.Chips(rec.Labels()))
+
+			if reqs := rec.Spec.Requires; len(reqs) > 0 {
+				fmt.Fprintf(out, "\n%s\n", th.Warn("%s wants:", rec.Spec.Name))
+				for _, req := range reqs {
+					fmt.Fprintf(out, "    %s %s  %s\n", req.Kind.Badge(),
+						th.Bold.Render(string(req.Kind)), th.Subtle.Render(strings.Join(req.Scope, ", ")))
+					if req.Reason != "" {
+						fmt.Fprintf(out, "      %s\n", th.Subtle.Render(req.Reason))
+					}
+				}
+				fmt.Fprintf(out, "  %s\n", th.Subtle.Render("you will be asked before it uses these"))
 			}
 			return nil
 		},
@@ -128,16 +141,17 @@ func (a *App) cmdLs() *cobra.Command {
 				return nil
 			}
 
-			tw := tabwriter.NewWriter(c.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "NAME\tLABELS\tWANTS\tSUMMARY")
+			th := ui.ForWriter(c.OutOrStdout())
+			tbl := th.NewTable("NAME", "LABELS", "WANTS", "SUMMARY")
 			for _, r := range records {
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
-					r.Spec.Name,
-					strings.Join(r.Labels(), ","),
+				tbl.Row(
+					th.Name.Render(r.Spec.Name),
+					th.Chips(r.Labels()),
 					badges(r),
-					r.Spec.Summary)
+					th.Subtle.Render(r.Spec.Summary))
 			}
-			return tw.Flush()
+			tbl.Render(c.OutOrStdout())
+			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output as JSON")
@@ -156,15 +170,16 @@ func (a *App) cmdInfo() *cobra.Command {
 				return err
 			}
 			out := c.OutOrStdout()
-			fmt.Fprintf(out, "%s", rec.Spec.Name)
+			th := ui.ForWriter(out)
+			fmt.Fprintf(out, "%s", th.Name.Render(rec.Spec.Name))
 			if rec.Spec.Version != "" {
-				fmt.Fprintf(out, " %s", rec.Spec.Version)
+				fmt.Fprintf(out, " %s", th.Subtle.Render(rec.Spec.Version))
 			}
 			fmt.Fprintln(out)
 			if rec.Spec.Summary != "" {
 				fmt.Fprintf(out, "  %s\n", rec.Spec.Summary)
 			}
-			fmt.Fprintf(out, "\n  labels    %s\n", strings.Join(rec.Labels(), ", "))
+			fmt.Fprintf(out, "\n  labels    %s\n", th.Chips(rec.Labels()))
 			fmt.Fprintf(out, "  module    %s\n", rec.WasmDigest[:16])
 			fmt.Fprintf(out, "  added     %s\n", rec.Added.Local().Format("2006-01-02 15:04"))
 			if rec.Source != "" {
@@ -254,26 +269,27 @@ func (a *App) cmdDoctor() *cobra.Command {
 		GroupID: "manage",
 		RunE: func(c *cobra.Command, args []string) error {
 			out := c.OutOrStdout()
+			th := ui.ForWriter(out)
 			if v, ok := a.tk.GoAvailable(c.Context()); ok {
-				fmt.Fprintf(out, "  ✓ go toolchain    %s\n", v)
+				fmt.Fprintf(out, "  %s\n", th.OK("go toolchain    %s", v))
 			} else {
-				fmt.Fprintf(out, "  ✗ go toolchain    not found — forge can still run installed tools, but not build new ones\n")
+				fmt.Fprintf(out, "  %s\n", th.Warn("go toolchain    not found — forge can still run installed tools, but not build new ones"))
 			}
 			records, err := a.tk.List(labels.All)
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(out, "  ✓ tools installed %d\n", len(records))
+			fmt.Fprintf(out, "  %s\n", th.OK("tools installed %d", len(records)))
 
 			var broken int
 			for _, r := range records {
 				if _, err := a.tk.Store().Blob(r.WasmDigest); err != nil {
-					fmt.Fprintf(out, "  ✗ %s: %v\n", r.Spec.Name, err)
+					fmt.Fprintf(out, "  %s\n", th.Fail("%s: %v", r.Spec.Name, err))
 					broken++
 				}
 			}
 			if broken == 0 && len(records) > 0 {
-				fmt.Fprintf(out, "  ✓ modules         all present and verified\n")
+				fmt.Fprintf(out, "  %s\n", th.OK("modules         all present and verified"))
 			}
 			return nil
 		},

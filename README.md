@@ -31,8 +31,18 @@ every request.
 
 ## Status
 
-Early. The wasm runtime, capability model and filesystem jail are being built
-first; the CLI and MCP surfaces are the v0.1 target.
+The CLI and MCP surfaces work. REPL, OpenAPI and gRPC are next, and export /
+import after that.
+
+```console
+$ forge view set dev 'git || json'
+$ forge view use dev            # every surface narrows at once
+$ forge mcp                     # stdio, for an agent
+$ forge mcp --http 127.0.0.1:7777   # /mcp/<view> serves a named view
+```
+
+Building a tool currently needs the SDK resolvable as a module. Until it is
+tagged, point forge at a checkout with `FORGE_SDK_DIR=/path/to/forge/sdk`.
 
 ## Security
 
