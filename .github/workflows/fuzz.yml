@@ -30,6 +30,8 @@ jobs:
             pkg: ./internal/binding
           - func: FuzzNormalizeDoesNotPanic
             pkg: ./internal/binding
+          - func: FuzzParse
+            pkg: ./internal/labels
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
