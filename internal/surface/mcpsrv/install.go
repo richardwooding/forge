@@ -65,7 +65,7 @@ func (m *Manager) addInstallTool(srv *mcp.Server, sel labels.Selector) {
 			},
 			Required: []string{"source"},
 		},
-		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolPtr(true)},
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: new(true)},
 	}, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return m.handleInstall(ctx, req, sel)
 	})
@@ -233,5 +233,3 @@ func installSummary(res *toolkit.AddResult, sel labels.Selector) string {
 	}
 	return b.String()
 }
-
-func boolPtr(b bool) *bool { return &b }
