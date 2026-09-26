@@ -68,6 +68,17 @@ jobs:
       # means it can drift from the .proto. This is what notices.
       - run: git diff --exit-code -- grpcapi
 
+      # go.mod is generated too, and nothing else here checks it: build, vet
+      # and test all pass happily with a direct dependency still marked
+      # indirect. That drift went unnoticed until goreleaser's own `go mod
+      # tidy` hook dirtied the tree mid-release, which is a bad place to find
+      # out.
+      - name: go.mod is tidy
+        run: |
+          go mod tidy
+          (cd sdk && go mod tidy)
+          git diff --exit-code -- go.mod go.sum sdk/go.mod sdk/go.sum
+
   lint:
     runs-on: ubuntu-latest
     steps:
