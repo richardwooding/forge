@@ -270,6 +270,13 @@ func faultFor(err error, b *binding.Bound) *binding.Fault {
 // writeRendition sends a result in the shape the tool declared.
 func writeRendition(w http.ResponseWriter, res *toolkit.Result) {
 	r := res.Rendition
+	if res.Truncated {
+		// A header rather than anything in the body: the body is the tool's
+		// own bytes and annotating it would corrupt whatever the caller is
+		// piping it into. Silence is not an option either -- a client cannot
+		// tell a cut-off answer from a whole one.
+		w.Header().Set("Forge-Truncated", "true")
+	}
 	switch r.Kind {
 	case core.OutputText:
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")

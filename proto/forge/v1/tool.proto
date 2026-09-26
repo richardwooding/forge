@@ -1,0 +1,160 @@
+syntax = "proto3";
+
+package forge.v1;
+
+import "google/protobuf/struct.proto";
+
+option go_package = "github.com/richardwooding/forge/grpcapi/forge/v1;forgev1";
+
+// ToolService exposes forge's tools.
+//
+// One service for every tool rather than a generated service per tool. gRPC
+// refuses RegisterService after Serve has begun -- it calls Fatalf, which ends
+// the process -- so a tool installed while the server is running could never
+// get a service of its own. A stable service whose payloads are dynamic is the
+// shape that actually survives tools coming and going.
+service ToolService {
+  // ListTools returns the tools in a view.
+  rpc ListTools(ListToolsRequest) returns (ListToolsResponse);
+
+  // DescribeTool returns one tool's schema.
+  rpc DescribeTool(DescribeToolRequest) returns (DescribeToolResponse);
+
+  // Invoke runs an operation and returns its result.
+  rpc Invoke(InvokeRequest) returns (InvokeResponse);
+
+  // InvokeStream runs an operation, reporting the tool's own output and
+  // progress as they happen and finishing with the result.
+  rpc InvokeStream(InvokeStreamRequest) returns (stream InvokeStreamResponse);
+}
+
+message ListToolsRequest {
+  // View names a saved view. Empty means the server's default.
+  string view = 1;
+}
+
+message ListToolsResponse {
+  repeated Tool tools = 1;
+}
+
+// Tool is one callable operation.
+message Tool {
+  // Name is what every forge surface calls this operation, so it matches the
+  // MCP tool name and the REST path segment exactly.
+  string name = 1;
+  string tool = 2;
+  string op = 3;
+  string summary = 4;
+  repeated string labels = 5;
+
+  // input_schema_json is a JSON Schema document, carried as text.
+  //
+  // Deliberately not google.protobuf.Struct: Struct's numbers are doubles, so
+  // a round trip through it turns "minLength": 3 into 3.0 and mangles any
+  // large integer constraint. Clients parse this with a real JSON Schema
+  // library anyway.
+  string input_schema_json = 6;
+
+  string output_kind = 7;
+  string output_media_type = 8;
+
+  // requires names the capabilities the tool asks for, so a caller choosing
+  // between tools can see that one of them reaches the network.
+  repeated string requires = 9;
+
+  bool read_only = 10;
+  bool destructive = 11;
+  bool idempotent = 12;
+}
+
+message DescribeToolRequest {
+  string view = 1;
+  string name = 2;
+}
+
+message DescribeToolResponse {
+  Tool tool = 1;
+  string description = 2;
+}
+
+message InvokeRequest {
+  string view = 1;
+  string name = 2;
+
+  // input is the operation's parameters.
+  oneof input {
+    // json is the canonical, lossless form, and the one forge's other
+    // surfaces use. Prefer it.
+    bytes json = 3;
+
+    // struct_value exists so that grpcurl stays pleasant to use. It is LOSSY
+    // for integers beyond 2^53, because Struct stores every number as a
+    // double; that is documented rather than left to be discovered, and the
+    // conformance suite asserts the divergence so it cannot quietly become an
+    // undocumented one.
+    google.protobuf.Struct struct_value = 4;
+  }
+}
+
+message InvokeResponse {
+  // is_error reports that the tool ran and failed.
+  //
+  // A failed tool is an OK response, not a non-OK status. A status would hide
+  // the payload in status.Details(), where most clients never look, and would
+  // conflate "the tool said no" with "forge could not run it" -- a distinction
+  // every other forge surface keeps.
+  bool is_error = 1;
+  string error = 2;
+
+  // Exactly one of these carries the result, according to output_kind.
+  bytes json = 3;
+  string text = 4;
+  bytes binary = 5;
+  string media_type = 6;
+
+  bytes stdout = 7;
+  bytes stderr = 8;
+
+  // truncated reports that output hit a cap and was cut, so a caller does not
+  // mistake a partial answer for a whole one.
+  bool truncated = 9;
+
+  int64 wall_nanos = 10;
+}
+
+// InvokeStreamRequest mirrors InvokeRequest.
+//
+// It is a separate message rather than a reuse so the two calls can evolve
+// apart: a field that only makes sense while streaming should not appear in
+// the unary request, and vice versa. The duplication is the price of that,
+// and it is small.
+message InvokeStreamRequest {
+  string view = 1;
+  string name = 2;
+
+  oneof input {
+    bytes json = 3;
+    google.protobuf.Struct struct_value = 4;
+  }
+}
+
+// InvokeStreamResponse is one message of a streaming invocation.
+message InvokeStreamResponse {
+  oneof event {
+    Progress progress = 1;
+    LogLine log = 2;
+    InvokeResponse result = 3;
+  }
+}
+
+message Progress {
+  int64 done = 1;
+  // total is zero when the tool does not know how much work there is.
+  int64 total = 2;
+  string message = 3;
+}
+
+message LogLine {
+  string level = 1;
+  string message = 2;
+}

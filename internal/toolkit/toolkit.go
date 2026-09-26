@@ -372,6 +372,13 @@ type Result struct {
 	Usage     core.Usage
 	Stdout    []byte
 	Stderr    []byte
+
+	// Truncated reports that output hit a cap and was cut.
+	//
+	// Every surface has to pass this on. Presenting the first megabyte of a
+	// larger answer as though it were the whole answer is worse than refusing
+	// it, because nothing downstream can tell the difference.
+	Truncated bool
 }
 
 // Invoke runs one operation.
@@ -468,8 +475,9 @@ func (tk *Toolkit) Invoke(ctx context.Context, c Call) (*Result, error) {
 			HostCalls: int(resp.HostCalls),
 			BytesOut:  resp.HostBytes,
 		},
-		Stdout: resp.Stdout,
-		Stderr: resp.Stderr,
+		Stdout:    resp.Stdout,
+		Stderr:    resp.Stderr,
+		Truncated: resp.Truncated,
 	}, nil
 }
 

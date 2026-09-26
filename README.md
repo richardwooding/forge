@@ -115,3 +115,39 @@ building it already ran the Go toolchain, unsandboxed, over the source.
 ## Licence
 
 MIT
+
+## The other surfaces
+
+```console
+$ forge serve                       # a unix socket by default
+  REST  /v1/tools          OpenAPI /v1/openapi.json
+  MCP   /mcp               gRPC    forge.v1.ToolService
+```
+
+Everything is served per view, so `/v1/views/dev/openapi.json` describes only
+the tools in `dev` and a client generated from it stays inside that view.
+
+```console
+$ curl -s --unix-socket ~/.run/forge/forge.sock \
+    -X POST -d '{"data":"{\"b\":2,\"a\":1}"}' \
+    http://localhost/v1/tools/jsonfmt_canon/invoke
+{"a":1,"b":2}
+
+$ grpcurl -plaintext 127.0.0.1:7777 forge.v1.ToolService/ListTools
+```
+
+One service for every tool rather than one generated per tool: gRPC refuses
+`RegisterService` after `Serve` has begun, so a tool installed while the server
+is running could never be given a service of its own.
+
+### Regenerating the protobuf code
+
+```console
+$ go install github.com/bufbuild/buf/cmd/buf@latest
+$ go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+$ go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+$ buf lint && buf generate
+```
+
+The generated code is committed so `go get` works without any of that. CI
+regenerates and fails on a diff, so it cannot drift from the `.proto`.

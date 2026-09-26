@@ -311,6 +311,13 @@ func renderResult(tool, op string, res *toolkit.Result) *mcp.CallToolResult {
 		out.Content = []mcp.Content{&mcp.TextContent{Text: string(r.JSON)}}
 	}
 
+	if res.Truncated {
+		// Said plainly, because a model reasoning over a cut-off answer as
+		// though it were complete is exactly the failure to avoid.
+		out.Content = append(out.Content, &mcp.TextContent{
+			Text: "note: this output was truncated because it exceeded forge's size limit.",
+		})
+	}
 	if len(res.Stderr) > 0 {
 		out.Content = append(out.Content, &mcp.TextContent{
 			Text: "stderr:\n" + string(res.Stderr),

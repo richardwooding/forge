@@ -49,6 +49,25 @@ jobs:
           go-version-file: go.mod
       - run: go test -short -timeout 120s ./...
 
+  proto:
+    name: generated code is current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      # buf rather than protoc: it is a Go program, so it installs the same
+      # way everything else here does and needs no system package.
+      - run: go install github.com/bufbuild/buf/cmd/buf@latest
+      - run: go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+      - run: go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+      - run: buf lint
+      - run: buf generate
+      # Generated code is committed so that `go get` works without buf, which
+      # means it can drift from the .proto. This is what notices.
+      - run: git diff --exit-code -- grpcapi
+
   lint:
     runs-on: ubuntu-latest
     steps:

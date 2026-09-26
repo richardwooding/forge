@@ -8,12 +8,18 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 
+	"github.com/richardwooding/forge/internal/surface/grpcsvc"
 	"github.com/richardwooding/forge/internal/surface/mcpsrv"
 	"github.com/richardwooding/forge/internal/surface/rest"
+
+	forgev1 "github.com/richardwooding/forge/grpcapi/forge/v1"
 )
 
 func (a *App) cmdServe() *cobra.Command {
@@ -52,6 +58,15 @@ func (a *App) cmdServe() *cobra.Command {
 				Default: a.selector,
 			})
 
+			grpcSrv := grpc.NewServer()
+			forgev1.RegisterToolServiceServer(grpcSrv, grpcsvc.New(grpcsvc.Options{
+				Toolkit: a.tk, Views: a.tk.Views(), Default: a.selector,
+			}))
+			// Reflection, so grpcurl and grpcui work without a .proto file to
+			// hand. The service is fixed, so this describes forge's API, not
+			// the tools -- those are discovered through ListTools.
+			reflection.Register(grpcSrv)
+
 			mux := http.NewServeMux()
 			mux.Handle("/mcp", mgr.Handler(mcpsrv.HTTPOptions{
 				Views: a.tk.Views(), Default: a.selector, AllowedOrigins: allowOrigin,
@@ -61,23 +76,65 @@ func (a *App) cmdServe() *cobra.Command {
 			}))
 			mux.Handle("/", originGuard(allowOrigin, api.Handler()))
 
+			// One handler for everything. gRPC speaks prior-knowledge HTTP/2,
+			// which without TLS means no ALPN, so the server has to accept
+			// unencrypted HTTP/2 for a gRPC client and a curl to share an
+			// address.
+			//
+			// Through http.Server.Protocols rather than x/net/http2/h2c: that
+			// package is deprecated in favour of exactly this, and using it
+			// would mean an extra dependency to do something the standard
+			// library now does itself.
+			//
+			// grpc.Server.ServeHTTP is documented as experimental and slightly
+			// lower fidelity than serving a raw listener. For a localhost
+			// multitool that is a fair trade for one address, and the fallback
+			// if it ever matters is separate ports rather than cmux and its
+			// byte-peeking at the HTTP/2 preface.
+			root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
+					grpcSrv.ServeHTTP(w, r)
+					return
+				}
+				mux.ServeHTTP(w, r)
+			})
+
 			ln, describe, err := listen(addr, socket)
 			if err != nil {
 				return err
 			}
 			defer func() { _ = ln.Close() }()
 
-			srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+			protocols := new(http.Protocols)
+			protocols.SetHTTP1(true)
+			protocols.SetUnencryptedHTTP2(true)
+
+			srv := &http.Server{
+				Handler:           root,
+				Protocols:         protocols,
+				ReadHeaderTimeout: 10 * time.Second,
+			}
 
 			fmt.Fprintf(c.ErrOrStderr(), "forge serve: %s  (%s)\n", describe, a.describeView())
 			fmt.Fprintf(c.ErrOrStderr(), "  REST %s/v1/tools   OpenAPI %s/v1/openapi.json   MCP %s/mcp\n",
 				describe, describe, describe)
+			fmt.Fprintf(c.ErrOrStderr(), "  gRPC forge.v1.ToolService on the same address (h2c)\n")
 
 			go func() {
 				<-c.Context().Done()
 				shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
 				_ = srv.Shutdown(shutdown)
+				// GracefulStop blocks for as long as any server-stream is
+				// open, so it gets the same deadline rather than the power to
+				// hang shutdown indefinitely on one long InvokeStream.
+				done := make(chan struct{})
+				go func() { grpcSrv.GracefulStop(); close(done) }()
+				select {
+				case <-done:
+				case <-shutdown.Done():
+					grpcSrv.Stop()
+				}
 			}()
 
 			if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
