@@ -179,7 +179,7 @@ type Reader struct {
 func Read(r io.Reader) (*Reader, error) {
 	zr, err := zstd.NewReader(r)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNotBundle, err)
+		return nil, fmt.Errorf("%w: %w", ErrNotBundle, err)
 	}
 	defer zr.Close()
 
@@ -193,7 +193,7 @@ func Read(r io.Reader) (*Reader, error) {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrNotBundle, err)
+			return nil, fmt.Errorf("%w: %w", ErrNotBundle, err)
 		}
 		if h.Typeflag != tar.TypeReg {
 			continue
@@ -209,7 +209,7 @@ func Read(r io.Reader) (*Reader, error) {
 				return nil, err
 			}
 			if err := json.Unmarshal(raw, &out.Index); err != nil {
-				return nil, fmt.Errorf("%w: unreadable index: %v", ErrNotBundle, err)
+				return nil, fmt.Errorf("%w: unreadable index: %w", ErrNotBundle, err)
 			}
 			haveIndex = true
 

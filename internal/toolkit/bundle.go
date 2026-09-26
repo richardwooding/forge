@@ -196,7 +196,9 @@ func (tk *Toolkit) Import(ctx context.Context, r io.Reader, policy OnConflict) (
 func (tk *Toolkit) freeName(base string) (string, error) {
 	for i := 2; i < 100; i++ {
 		candidate := fmt.Sprintf("%s-%d", base, i)
-		if _, err := tk.store.Get(candidate); err != nil {
+		// Not-found is the answer being looked for here, so the error is the
+		// success condition rather than a failure.
+		if _, err := tk.store.Get(candidate); errors.Is(err, store.ErrNotFound) {
 			return candidate, nil
 		}
 	}

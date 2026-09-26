@@ -62,9 +62,9 @@ func newHome(t *testing.T) *toolkit.Toolkit {
 	return tk
 }
 
-func install(t *testing.T, tk *toolkit.Toolkit, name, summary string) {
+func install(t *testing.T, tk *toolkit.Toolkit, summary string) {
 	t.Helper()
-	src := strings.ReplaceAll(toolSrc, "NAME", name)
+	src := strings.ReplaceAll(toolSrc, "NAME", "greeter")
 	src = strings.ReplaceAll(src, "SUMMARY", summary)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644); err != nil {
@@ -87,7 +87,7 @@ func export(t *testing.T, tk *toolkit.Toolkit, sel labels.Selector) []byte {
 // TestARoundTripBetweenTwoMachines is what the format is for.
 func TestARoundTripBetweenTwoMachines(t *testing.T) {
 	from := newHome(t)
-	install(t, from, "greeter", "Greets someone")
+	install(t, from, "Greets someone")
 
 	raw := export(t, from, labels.All)
 
@@ -114,7 +114,7 @@ func TestARoundTripBetweenTwoMachines(t *testing.T) {
 
 func TestExportHonoursTheView(t *testing.T) {
 	from := newHome(t)
-	install(t, from, "greeter", "in the view")
+	install(t, from, "in the view")
 
 	// A tool with a different label, which the selector excludes.
 	src := strings.ReplaceAll(toolSrc, "NAME", "other")
@@ -145,7 +145,7 @@ func TestExportHonoursTheView(t *testing.T) {
 // question of what it may do is asked again on the machine it lands on.
 func TestImportingGrantsNothing(t *testing.T) {
 	from := newHome(t)
-	install(t, from, "greeter", "x")
+	install(t, from, "x")
 	if err := from.Policy().Grant("greeter", []capability.Grant{
 		{Kind: capability.NetHTTP, Scope: []string{"example.com"}},
 	}); err != nil {
@@ -170,7 +170,7 @@ func TestImportingGrantsNothing(t *testing.T) {
 // would be most tempting to keep them.
 func TestReplacingDoesNotInheritGrants(t *testing.T) {
 	to := newHome(t)
-	install(t, to, "greeter", "the local one")
+	install(t, to, "the local one")
 	if err := to.Policy().Grant("greeter", []capability.Grant{
 		{Kind: capability.NetHTTP, Scope: []string{"example.com"}},
 	}); err != nil {
@@ -178,7 +178,7 @@ func TestReplacingDoesNotInheritGrants(t *testing.T) {
 	}
 
 	from := newHome(t)
-	install(t, from, "greeter", "a different one, same name")
+	install(t, from, "a different one, same name")
 	raw := export(t, from, labels.All)
 
 	res, err := to.Import(context.Background(), bytes.NewReader(raw), toolkit.ConflictReplace)
@@ -200,13 +200,13 @@ func TestReplacingDoesNotInheritGrants(t *testing.T) {
 func TestConflictPolicies(t *testing.T) {
 	makeBundle := func(t *testing.T, summary string) []byte {
 		from := newHome(t)
-		install(t, from, "greeter", summary)
+		install(t, from, summary)
 		return export(t, from, labels.All)
 	}
 
 	t.Run("skip leaves the installed one alone", func(t *testing.T) {
 		to := newHome(t)
-		install(t, to, "greeter", "the local one")
+		install(t, to, "the local one")
 		raw := makeBundle(t, "the incoming one")
 
 		res, err := to.Import(context.Background(), bytes.NewReader(raw), toolkit.ConflictSkip)
@@ -224,7 +224,7 @@ func TestConflictPolicies(t *testing.T) {
 
 	t.Run("replace overwrites", func(t *testing.T) {
 		to := newHome(t)
-		install(t, to, "greeter", "the local one")
+		install(t, to, "the local one")
 		raw := makeBundle(t, "the incoming one")
 
 		if _, err := to.Import(context.Background(), bytes.NewReader(raw), toolkit.ConflictReplace); err != nil {
@@ -238,7 +238,7 @@ func TestConflictPolicies(t *testing.T) {
 
 	t.Run("rename installs alongside", func(t *testing.T) {
 		to := newHome(t)
-		install(t, to, "greeter", "the local one")
+		install(t, to, "the local one")
 		raw := makeBundle(t, "the incoming one")
 
 		res, err := to.Import(context.Background(), bytes.NewReader(raw), toolkit.ConflictRename)
@@ -263,7 +263,7 @@ func TestConflictPolicies(t *testing.T) {
 
 	t.Run("fail installs nothing", func(t *testing.T) {
 		to := newHome(t)
-		install(t, to, "greeter", "the local one")
+		install(t, to, "the local one")
 		raw := makeBundle(t, "the incoming one")
 
 		if _, err := to.Import(context.Background(), bytes.NewReader(raw), toolkit.ConflictFail); err == nil {
@@ -292,7 +292,7 @@ func TestExportRefusesWhenNothingMatches(t *testing.T) {
 	// Writing an empty bundle would look like it worked and produce a file
 	// that installs nothing.
 	from := newHome(t)
-	install(t, from, "greeter", "x")
+	install(t, from, "x")
 	var buf bytes.Buffer
 	if _, err := from.Export(&buf, labels.MustParse("nosuchlabel")); err == nil {
 		t.Error("exported an empty bundle")
@@ -303,7 +303,7 @@ func TestUserLabelsSurviveTheTrip(t *testing.T) {
 	// They are part of how someone organised their tools; losing them on every
 	// transfer would make labelling not worth doing.
 	from := newHome(t)
-	install(t, from, "greeter", "x")
+	install(t, from, "x")
 	rec, err := from.Get("greeter")
 	if err != nil {
 		t.Fatal(err)
