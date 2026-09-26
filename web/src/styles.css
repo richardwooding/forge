@@ -37,8 +37,14 @@ body {
 
 .app { display: flex; min-height: 100vh; }
 
+/* flex: 0 0 auto, not a bare width: a flex item defaults to shrinking, and a
+   sidebar that shrinks while its contents do not is one whose contents end up
+   drawn on top of the main column. overflow-x: hidden is the backstop for a
+   name too long to wrap. */
 aside {
-  width: 22rem;
+  flex: 0 0 22rem;
+  min-width: 0;
+  overflow-x: hidden;
   border-right: 1px solid var(--gl-border);
   padding: 1rem;
   background: var(--gl-panel);
@@ -54,18 +60,31 @@ main { flex: 1; min-width: 0; padding: 1.5rem; }
 form, .needs, .result, .failure { max-width: 44rem; }
 
 .tools { list-style: none; margin: 0; padding: 0; }
+
+/* flex-wrap, because a tool with four labels and a capability badge does not
+   fit beside its name in 22rem. Without it the row keeps going and the chips
+   land in the middle of whatever the main column is showing. */
 .tools button {
-  display: flex; gap: .5rem; align-items: center; width: 100%;
+  display: flex; flex-wrap: wrap; gap: .25rem .5rem; align-items: center;
+  width: 100%; max-width: 100%;
   background: none; border: 0; color: inherit; font: inherit;
   padding: .4rem .5rem; text-align: left; border-radius: 4px; cursor: pointer;
 }
 .tools button:hover { background: var(--gl-bg); }
 .tools button.on { background: var(--gl-bg); outline: 1px solid var(--gl-accent); }
-.name { flex: 1; }
+
+/* min-width: 0 lets the name shrink; without it the flex item refuses to go
+   below its text width and pushes everything after it out of the box. */
+.name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chips { display: flex; flex-wrap: wrap; gap: .2rem; min-width: 0; }
+/* No margin-left: auto -- on a wrapped row that would shove the badges onto
+   a line of their own at the far right. Let them follow the chips. */
+.wants { flex: 0 0 auto; }
 
 .chip {
   border: 1px solid currentColor; border-radius: 999px;
-  padding: 0 .4rem; font-size: .7rem; margin-right: .2rem;
+  padding: 0 .4rem; font-size: .7rem;
+  white-space: nowrap;
 }
 
 .field { margin: 0 0 1rem; display: flex; flex-direction: column; gap: .25rem; }
