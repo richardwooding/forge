@@ -122,6 +122,34 @@ Needs: []tool.Need{{
 forge asks you before granting any of it, shows every request in one prompt —
 the combination is what carries the risk — and remembers your answer.
 
+## Moving tools between machines
+
+```console
+$ forge export -o dev.forge          # the tools in the current view
+$ forge import dev.forge             # on another machine
+```
+
+Bundles are content addressed, so the archive verifies itself, and reproducible,
+so the same tools always produce the same bytes and two bundles can simply be
+compared.
+
+Any OCI registry works as well — ghcr, a company's own, one on a laptop:
+
+```console
+$ forge push ghcr.io/you/forge-tools:dev
+$ forge pull ghcr.io/you/forge-tools:dev
+```
+
+The index and each module are typed layers, so a registry stores and serves
+them without knowing anything about forge, and `crane manifest` gives an honest
+answer rather than showing something mislabelled as a container image.
+
+**Nothing is granted by importing.** What a tool may do is decided on the
+machine it runs on; a bundle that arrived pre-authorised would let whoever
+built it decide for you. An imported tool asks on first use — including one
+that replaces a tool you had already approved, because a module from elsewhere
+is a different module whatever it calls itself.
+
 ## The surfaces agree, and that is checked
 
 Four surfaces exposing the same tools is only useful if they behave the same
