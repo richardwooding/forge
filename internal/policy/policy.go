@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/richardwooding/forge/internal/capability"
 )
@@ -30,13 +31,36 @@ import (
 type Answer int
 
 const (
-	// Deny refuses and records the refusal.
+	// Deny is a person saying no. It is recorded, so the tool cannot re-ask on
+	// every invocation and wear them down.
 	Deny Answer = iota
 	// AllowOnce permits this invocation and asks again next time.
 	AllowOnce
 	// AllowAlways permits and records the grant.
 	AllowAlways
+	// Unavailable means there was nobody to ask.
+	//
+	// This is emphatically NOT a refusal, and keeping the two apart is the
+	// whole reason it exists. Recording "I could not ask" as "they said no"
+	// makes the first call from any surface without a human attached -- a
+	// server, a script, an MCP session -- permanently kill the tool, with no
+	// prompt ever shown to anyone and no hint as to why. The call still fails,
+	// because nothing may be granted unasked; it just fails recoverably.
+	Unavailable
 )
+
+func (a Answer) String() string {
+	switch a {
+	case AllowOnce:
+		return "allow once"
+	case AllowAlways:
+		return "allow always"
+	case Unavailable:
+		return "nobody to ask"
+	default:
+		return "deny"
+	}
+}
 
 // Request is one capability a tool wants, as put to the user.
 type Request struct {
@@ -67,20 +91,120 @@ type Prompter interface {
 // ErrDenied is returned when a capability was refused.
 var ErrDenied = errors.New("capability denied")
 
-// DenyAll is the Prompter for contexts with nobody to ask: a server, a script,
-// a test. It refuses rather than allowing, because the alternative is that
-// running forge non-interactively silently grants everything.
+// DenyAll is a Prompter that always refuses, as though a person had said no.
+// It exists for tests; production code that has nobody to ask should say so
+// with Unavailable instead, so that the refusal is not recorded.
 type DenyAll struct{}
 
 // Ask implements Prompter.
 func (DenyAll) Ask(context.Context, Prompt) (Answer, error) { return Deny, nil }
 
+// NoPrompter is the Prompter for a context with nobody to ask.
+//
+// It is the default when none is configured. It withholds the capability --
+// nothing may be granted without being asked for -- while making clear that
+// the question was never put, so the refusal is not written down.
+type NoPrompter struct{}
+
+// Ask implements Prompter.
+func (NoPrompter) Ask(context.Context, Prompt) (Answer, error) { return Unavailable, nil }
+
+// ErrCannotAsk reports that a capability was withheld because there was nobody
+// to ask, as distinct from someone having refused.
+var ErrCannotAsk = errors.New("no way to ask for approval")
+
+// NeedsApproval is returned when a tool needs a capability and this session
+// could not put the question. It carries the unanswered prompt.
+//
+// A surface that can ask, but not synchronously, uses it to do so: MCP forbids
+// a server from raising an elicitation while it is serving a request, so the
+// question has to be handed back as part of the reply and re-entered with the
+// answer attached. Carrying the prompt in the error is what lets the surface
+// do that without reaching into the policy layer to work out what to ask.
+type NeedsApproval struct {
+	Tool     string
+	Summary  string
+	Requests []Request
+}
+
+func (e *NeedsApproval) Error() string {
+	return fmt.Sprintf("%s: %s needs %s, and this session has no way to ask you; approve it with `forge grant allow %s`",
+		ErrCannotAsk, e.Tool, describe(e.Requests), e.Tool)
+}
+
+func (e *NeedsApproval) Unwrap() error { return ErrCannotAsk }
+
+// Answered is a Prompter that replays an answer already collected elsewhere.
+//
+// It exists for the multi-round-trip case: the second call knows what the
+// person said, and replaying it through the ordinary path means persistence,
+// merging and the floor all behave exactly as they do for a prompt answered
+// on a terminal, rather than being reimplemented per surface.
+type Answered Answer
+
+// Ask implements Prompter.
+func (a Answered) Ask(context.Context, Prompt) (Answer, error) { return Answer(a), nil }
+
 // Policy holds the recorded decisions.
+//
+// The file on disk is the source of truth, not this process's copy of it.
+// forge is routinely several processes at once -- a long-lived `forge mcp`
+// serving an agent while someone runs `forge grant allow` in a terminal -- and
+// a server that cached its answers at startup would go on refusing a tool the
+// user had just approved, for as long as it stayed up. So every read checks
+// whether the file has changed underneath it first.
 type Policy struct {
 	path string
 
 	mu    sync.RWMutex
 	state state
+	// stamp identifies the file contents this state was read from.
+	stamp fileStamp
+}
+
+// fileStamp is what Policy compares to decide whether its copy is still
+// current. Modification time alone is too coarse -- two writes within one
+// filesystem timestamp tick are entirely possible here, since a grant and a
+// revoke can land in the same second -- so the size is part of it, and a write
+// through this process records its own stamp directly rather than inferring
+// one.
+type fileStamp struct {
+	mod  time.Time
+	size int64
+}
+
+func stampOf(path string) (fileStamp, bool) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fileStamp{}, false
+	}
+	return fileStamp{mod: fi.ModTime(), size: fi.Size()}, true
+}
+
+// refresh re-reads the file when it has changed since this copy was made.
+//
+// Callers hold no lock. A failed re-read leaves the last good state in place:
+// a policy file that is briefly unreadable -- mid-write by another process,
+// say -- must not be treated as a policy that grants nothing, which would turn
+// a transient filesystem state into a wave of spurious refusals.
+func (p *Policy) refresh() {
+	stamp, ok := stampOf(p.path)
+
+	p.mu.RLock()
+	current := p.stamp
+	p.mu.RUnlock()
+	if !ok || stamp == current {
+		return
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.stamp == stamp {
+		return // another goroutine got there first
+	}
+	if err := p.loadLocked(); err != nil {
+		return
+	}
 }
 
 type state struct {
@@ -168,8 +292,10 @@ func under(path, prefix string) bool {
 	return strings.HasPrefix(path, prefix+string(filepath.Separator))
 }
 
-// Granted returns what a tool currently holds.
+// Granted returns what a tool currently holds, re-reading the file if another
+// process has written it since this copy was made.
 func (p *Policy) Granted(tool string) capability.Set {
+	p.refresh()
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return capability.NewSet(p.state.Grants[tool]...)
@@ -224,7 +350,7 @@ func (r *Resolver) Resolve(ctx context.Context, tool, summary string, requests [
 
 	prompter := r.Prompter
 	if prompter == nil {
-		prompter = DenyAll{}
+		prompter = NoPrompter{}
 	}
 	answer, err := prompter.Ask(ctx, Prompt{Tool: tool, Summary: summary, Requests: missing})
 	if err != nil {
@@ -242,6 +368,11 @@ func (r *Resolver) Resolve(ctx context.Context, tool, summary string, requests [
 		// Not persisted: the whole point of "once" is that the next invocation
 		// asks again.
 		return capability.NewSet(grantsFor(requests)...), nil
+	case Unavailable:
+		// Deliberately not recorded. The question was never put, so there is no
+		// answer to remember, and remembering one would silently and
+		// permanently disable the tool on every surface.
+		return capability.Set{}, &NeedsApproval{Tool: tool, Summary: summary, Requests: missing}
 	default:
 		if err := r.Policy.Refuse(tool, missing); err != nil {
 			return capability.Set{}, err
@@ -268,6 +399,7 @@ func describe(reqs []Request) string {
 
 // Grant records capabilities for a tool.
 func (p *Policy) Grant(tool string, grants []capability.Grant) error {
+	p.refresh()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.state.Grants == nil {
@@ -280,6 +412,7 @@ func (p *Policy) Grant(tool string, grants []capability.Grant) error {
 
 // Revoke removes every grant for a tool.
 func (p *Policy) Revoke(tool string) error {
+	p.refresh()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	delete(p.state.Grants, tool)
@@ -290,6 +423,7 @@ func (p *Policy) Revoke(tool string) error {
 // Refuse records that a tool was told no, so that it cannot re-ask on every
 // invocation.
 func (p *Policy) Refuse(tool string, reqs []Request) error {
+	p.refresh()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.state.Denied == nil {
@@ -306,6 +440,7 @@ func (p *Policy) Refuse(tool string, reqs []Request) error {
 }
 
 func (p *Policy) deniedBefore(tool string, reqs []Request) bool {
+	p.refresh()
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	for _, r := range reqs {
@@ -318,6 +453,7 @@ func (p *Policy) deniedBefore(tool string, reqs []Request) bool {
 
 // Tools lists every tool with a recorded decision.
 func (p *Policy) Tools() []string {
+	p.refresh()
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	seen := map[string]bool{}
@@ -361,16 +497,32 @@ func mergeGrants(existing, added []capability.Grant) []capability.Grant {
 }
 
 func (p *Policy) load() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.loadLocked()
+}
+
+// loadLocked reads the file into state. The caller holds the write lock.
+func (p *Policy) loadLocked() error {
 	b, err := os.ReadFile(p.path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			p.state = state{}
+			p.stamp = fileStamp{}
 			return nil
 		}
 		return err
 	}
-	if err := json.Unmarshal(b, &p.state); err != nil {
+	var fresh state
+	if err := json.Unmarshal(b, &fresh); err != nil {
 		return fmt.Errorf("reading %s: %w", p.path, err)
+	}
+	p.state = fresh
+	// Stamp after reading, so a write that lands between the stat and the read
+	// leaves a stamp that does not match and is picked up next time, rather
+	// than one that claims this copy is current when it is not.
+	if stamp, ok := stampOf(p.path); ok {
+		p.stamp = stamp
 	}
 	return nil
 }
@@ -383,7 +535,15 @@ func (p *Policy) save() error {
 	if err != nil {
 		return err
 	}
-	return writeAtomic(p.path, append(b, '\n'))
+	if err := writeAtomic(p.path, append(b, '\n')); err != nil {
+		return err
+	}
+	// Record our own write, so the next read does not mistake it for someone
+	// else's and reload what it already has.
+	if stamp, ok := stampOf(p.path); ok {
+		p.stamp = stamp
+	}
+	return nil
 }
 
 func writeAtomic(path string, data []byte) error {

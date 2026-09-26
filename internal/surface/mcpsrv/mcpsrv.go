@@ -224,7 +224,7 @@ func (m *Manager) buildTool(rec store.Record, op core.OpSpec, name string) (*mcp
 
 	toolName, opName := rec.Spec.Name, op.Name
 	handler := func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return m.invoke(ctx, toolName, opName, req.Params.Arguments)
+		return m.invokeWithApproval(ctx, req, toolName, opName)
 	}
 	return t, handler, nil
 }
@@ -250,28 +250,6 @@ func description(rec store.Record, op core.OpSpec) string {
 		parts = append(parts, "Requires: "+strings.Join(kinds, ", ")+".")
 	}
 	return strings.Join(parts, "\n\n")
-}
-
-// invoke runs a tool and shapes the reply.
-func (m *Manager) invoke(ctx context.Context, tool, op string, args json.RawMessage) (*mcp.CallToolResult, error) {
-	res, err := m.opts.Toolkit.Invoke(ctx, toolkit.Call{Tool: tool, Op: op, Input: args})
-	if err != nil {
-		// A fault is forge refusing or failing, which is a protocol-level
-		// error: the model cannot fix a denied capability by rewording its
-		// arguments.
-		return nil, err
-	}
-
-	if res.Rendition.ToolError {
-		// A tool that ran and failed is NOT a protocol error. MCP carries it as
-		// a result with IsError so the model can read what went wrong and try
-		// something else, which is exactly what should happen.
-		return &mcp.CallToolResult{
-			IsError: true,
-			Content: []mcp.Content{&mcp.TextContent{Text: res.Rendition.Message}},
-		}, nil
-	}
-	return renderResult(tool, op, res), nil
 }
 
 // renderResult maps a rendition onto MCP content blocks.

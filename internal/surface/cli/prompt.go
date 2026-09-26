@@ -31,7 +31,11 @@ func (p TerminalPrompter) Ask(ctx context.Context, prompt policy.Prompt) (policy
 		out = os.Stderr
 	}
 	if !isTerminal(out) || !readableTerminal(in) {
-		return policy.Deny, nil
+		// Unavailable, not Deny. `forge mcp` shares this prompter and its stdin
+		// is the JSON-RPC pipe, so it always lands here; reporting a refusal
+		// would record one and permanently disable the tool for every surface,
+		// without a prompt ever having been shown to anyone.
+		return policy.Unavailable, nil
 	}
 
 	fmt.Fprintf(out, "\n%s wants to:\n", prompt.Tool)

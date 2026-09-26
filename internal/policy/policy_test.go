@@ -3,6 +3,7 @@ package policy
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -116,12 +117,57 @@ func TestDenyIsRememberedSoTheToolCannotReAsk(t *testing.T) {
 	}
 }
 
-func TestNoPrompterMeansDenied(t *testing.T) {
-	// Running non-interactively must not silently grant everything.
+func TestNoPrompterWithholdsButDoesNotRefuse(t *testing.T) {
+	// Running non-interactively must not silently grant everything -- and must
+	// not silently refuse for ever either.
 	p := open(t)
 	r := &Resolver{Policy: p}
+
+	_, err := r.Resolve(context.Background(), "fetch", "", netRequest())
+	if !errors.Is(err, ErrCannotAsk) {
+		t.Fatalf("err = %v, want ErrCannotAsk", err)
+	}
+	if errors.Is(err, ErrDenied) {
+		t.Error("not being able to ask was reported as a refusal")
+	}
+	if !strings.Contains(err.Error(), "forge grant allow fetch") {
+		t.Errorf("err = %q, want it to say how to approve out of band", err)
+	}
+}
+
+// TestCannotAskIsNotRecorded is the property that makes the distinction worth
+// having. Writing down "nobody was there" as "they said no" would mean the
+// first call from any surface with no human attached permanently disabled the
+// tool everywhere, with no prompt ever shown and no hint as to why.
+func TestCannotAskIsNotRecorded(t *testing.T) {
+	p := open(t)
+	if _, err := (&Resolver{Policy: p}).Resolve(context.Background(), "fetch", "", netRequest()); err == nil {
+		t.Fatal("granted with nobody to ask")
+	}
+
+	if got := p.Tools(); len(got) != 0 {
+		t.Errorf("a decision was recorded for %v; nothing was ever asked", got)
+	}
+
+	// A later session that can ask must still get to ask.
+	ask := &answering{answer: AllowAlways}
+	if _, err := (&Resolver{Policy: p, Prompter: ask}).Resolve(context.Background(), "fetch", "", netRequest()); err != nil {
+		t.Fatalf("a session that could ask was blocked by the earlier one: %v", err)
+	}
+	if len(ask.asked) != 1 {
+		t.Error("the prompt was suppressed by an unrecorded non-answer")
+	}
+}
+
+func TestExplicitDenyIsStillRecorded(t *testing.T) {
+	// The distinction only earns its keep if a real no still sticks.
+	p := open(t)
+	r := &Resolver{Policy: p, Prompter: DenyAll{}}
 	if _, err := r.Resolve(context.Background(), "fetch", "", netRequest()); !errors.Is(err, ErrDenied) {
-		t.Errorf("err = %v, want ErrDenied when there is nobody to ask", err)
+		t.Fatalf("err = %v, want ErrDenied", err)
+	}
+	if got := p.Tools(); len(got) != 1 {
+		t.Errorf("Tools() = %v, want the refusal recorded", got)
 	}
 }
 
@@ -260,5 +306,152 @@ func TestGrantsMergeRatherThanReplace(t *testing.T) {
 	scopes := strings.Join(set.Scopes(capability.NetHTTP), ",")
 	if scopes != "a.test,b.test" {
 		t.Errorf("scopes = %q, want them merged and ordered", scopes)
+	}
+}
+
+// TestAnotherProcessesGrantIsPickedUp is issue #3: a long-lived `forge mcp`
+// and a `forge grant allow` in a terminal are two processes, and the server
+// used to go on refusing a tool the user had just approved for as long as it
+// stayed up.
+func TestAnotherProcessesGrantIsPickedUp(t *testing.T) {
+	dir := t.TempDir()
+	server, err := Open(dir) // the long-lived process
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminal, err := Open(dir) // someone at a prompt
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if server.Granted("fetch").Has(capability.NetHTTP) {
+		t.Fatal("granted before anyone granted anything")
+	}
+
+	if err := terminal.Grant("fetch", []capability.Grant{
+		{Kind: capability.NetHTTP, Scope: []string{"api.example.com"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !server.Granted("fetch").Allow(capability.NetHTTP, "api.example.com").OK {
+		t.Error("the running server did not see a grant made by another process")
+	}
+}
+
+func TestAnotherProcessesRevokeIsPickedUp(t *testing.T) {
+	// The same in the other direction, which matters more: a stale copy that
+	// keeps granting is worse than one that keeps refusing.
+	dir := t.TempDir()
+	server, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminal, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := terminal.Grant("fetch", []capability.Grant{
+		{Kind: capability.NetHTTP, Scope: []string{"api.example.com"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !server.Granted("fetch").Has(capability.NetHTTP) {
+		t.Fatal("setup: the grant did not reach the server")
+	}
+
+	if err := terminal.Revoke("fetch"); err != nil {
+		t.Fatal(err)
+	}
+	if server.Granted("fetch").Has(capability.NetHTTP) {
+		t.Error("the running server kept granting a capability that was revoked elsewhere")
+	}
+}
+
+// TestGrantAllowClearsARefusalForARunningServer is the exact sequence issue #3
+// reports: the tool is refused, the user approves from a terminal, and the
+// server must stop refusing without being restarted.
+func TestGrantAllowClearsARefusalForARunningServer(t *testing.T) {
+	dir := t.TempDir()
+	server, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminal, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Resolver{Policy: server, Prompter: DenyAll{}}
+	if _, err := r.Resolve(context.Background(), "fetch", "", netRequest()); !errors.Is(err, ErrDenied) {
+		t.Fatalf("err = %v, want ErrDenied", err)
+	}
+
+	if err := terminal.Grant("fetch", []capability.Grant{
+		{Kind: capability.NetHTTP, Scope: []string{"api.example.com"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	set, err := r.Resolve(context.Background(), "fetch", "", netRequest())
+	if err != nil {
+		t.Fatalf("still refusing after an out-of-band grant: %v", err)
+	}
+	if !set.Allow(capability.NetHTTP, "api.example.com").OK {
+		t.Error("the grant was not applied")
+	}
+}
+
+// TestConcurrentWritersDoNotLoseEachOthersGrants covers the case the stamp
+// exists for: two writes close enough together that modification time alone
+// could not tell them apart.
+func TestConcurrentWritersDoNotLoseEachOthersGrants(t *testing.T) {
+	dir := t.TempDir()
+	a, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.Grant("one", []capability.Grant{{Kind: capability.NetHTTP, Scope: []string{"a.test"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Grant("two", []capability.Grant{{Kind: capability.NetHTTP, Scope: []string{"b.test"}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	fresh, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range []string{"one", "two"} {
+		if !fresh.Granted(tool).Has(capability.NetHTTP) {
+			t.Errorf("%s's grant was lost when the other process wrote", tool)
+		}
+	}
+}
+
+// TestAnUnreadableFileKeepsTheLastGoodState: a policy file caught mid-write
+// must not read as a policy that grants nothing, which would turn a transient
+// filesystem state into a wave of spurious refusals.
+func TestAnUnreadableFileKeepsTheLastGoodState(t *testing.T) {
+	dir := t.TempDir()
+	p, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Grant("fetch", []capability.Grant{{Kind: capability.NetHTTP, Scope: []string{"a.test"}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "policy.json"), []byte("{ truncated"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !p.Granted("fetch").Has(capability.NetHTTP) {
+		t.Error("a corrupt file discarded grants that were already known good")
 	}
 }

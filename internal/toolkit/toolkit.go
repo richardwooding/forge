@@ -119,6 +119,32 @@ func New(ctx context.Context, cfg Config) (*Toolkit, error) {
 	}, nil
 }
 
+// prompterKey carries a per-invocation Prompter.
+type prompterKey struct{}
+
+// WithPrompter attaches a Prompter to a context for the duration of one call.
+//
+// The toolkit's configured Prompter is fixed at construction and shared by
+// every surface, which is wrong for any surface where the person to ask is
+// reachable only through the connection the request arrived on. An MCP
+// session is exactly that: whom to ask is a property of the request, not of
+// the process.
+func WithPrompter(ctx context.Context, p policy.Prompter) context.Context {
+	return context.WithValue(ctx, prompterKey{}, p)
+}
+
+// prompterFor returns the prompter to use for this call, preferring one
+// carried on the context.
+func (tk *Toolkit) prompterFor(ctx context.Context) policy.Prompter {
+	if p, ok := ctx.Value(prompterKey{}).(policy.Prompter); ok && p != nil {
+		return p
+	}
+	return tk.cfg.Prompter
+}
+
+// Paths reports where this toolkit keeps its data, cache and config.
+func (tk *Toolkit) Paths() Paths { return tk.cfg.Paths }
+
 // Views exposes the view store.
 func (tk *Toolkit) Views() *view.Store { return tk.views }
 
@@ -390,7 +416,7 @@ func (tk *Toolkit) Invoke(ctx context.Context, c Call) (*Result, error) {
 	grants, err := (&policy.Resolver{
 		Policy:   tk.policy,
 		Floor:    tk.floor,
-		Prompter: tk.cfg.Prompter,
+		Prompter: tk.prompterFor(ctx),
 	}).Resolve(ctx, rec.Spec.Name, rec.Spec.Summary, rec.Spec.Requires)
 	if err != nil {
 		// A refusal is the user's decision, not a malfunction, so it is
