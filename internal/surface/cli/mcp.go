@@ -16,9 +16,10 @@ import (
 
 func (a *App) cmdMCP() *cobra.Command {
 	var (
-		addr        string
-		metaTools   bool
-		allowOrigin []string
+		addr         string
+		metaTools    bool
+		allowInstall bool
+		allowOrigin  []string
 	)
 
 	cmd := &cobra.Command{
@@ -31,9 +32,15 @@ func (a *App) cmdMCP() *cobra.Command {
 			"exposed, and that is the point: every tool in the list costs the agent\n" +
 			"context on every request it makes.\n\n" +
 			"Over HTTP the view comes from the path, so /mcp/dev serves the dev view\n" +
-			"and each client config can pin its own.",
+			"and each client config can pin its own.\n\n" +
+			"--allow-install adds forge_add_tool, so an agent can compile and install a\n" +
+			"tool without leaving MCP. It asks the connected client to approve through\n" +
+			"MCP elicitation before installing anything, and refuses outright when the\n" +
+			"client cannot be asked -- but approval does not undo the risk `forge tool\n" +
+			"add` already carries: building runs the Go toolchain, unsandboxed, over\n" +
+			"whatever source it is given. Off by default.",
 		RunE: func(c *cobra.Command, args []string) error {
-			mgr := mcpsrv.New(mcpsrv.Options{Toolkit: a.tk, MetaTools: metaTools})
+			mgr := mcpsrv.New(mcpsrv.Options{Toolkit: a.tk, MetaTools: metaTools, AllowInstall: allowInstall})
 
 			if addr == "" {
 				return a.serveStdio(c, mgr)
@@ -44,6 +51,7 @@ func (a *App) cmdMCP() *cobra.Command {
 
 	cmd.Flags().StringVar(&addr, "http", "", "serve over HTTP on this address instead of stdio (e.g. 127.0.0.1:7777)")
 	cmd.Flags().BoolVar(&metaTools, "meta-tools", true, "offer forge_search_tools and forge_describe_tool so an agent can discover tools outside its view")
+	cmd.Flags().BoolVar(&allowInstall, "allow-install", false, "offer forge_add_tool, gated by MCP elicitation, so an agent can install a tool live")
 	cmd.Flags().StringArrayVar(&allowOrigin, "allow-origin", nil, "accept browser requests from this origin")
 	return cmd
 }
