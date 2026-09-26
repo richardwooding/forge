@@ -280,11 +280,16 @@ func (tk *Toolkit) Add(ctx context.Context, src string, opts ...AddOption) (*Add
 		Source:     src,
 	}
 	if replaced {
-		// Reinstalling keeps what the user added: their labels and the grants
-		// they already agreed to. Discarding either would mean every upgrade
-		// re-asked questions they had answered.
+		// Reinstalling keeps the labels the user added; discarding them would
+		// mean re-tagging a tool on every upgrade.
+		//
+		// Grants are not copied here because they never lived here. They live
+		// in the policy, keyed by tool name, and survive a rebuild of source
+		// the user pointed forge at themselves -- which is the intent, since
+		// re-asking on every `forge tool add` would train people to say yes.
+		// Import is the other case and revokes deliberately: a module from
+		// elsewhere is a different module whatever it calls itself.
 		rec.ExtraLabels = existing.ExtraLabels
-		rec.Grants = existing.Grants
 		rec.Added = existing.Added
 	}
 	if err := tk.store.Put(rec); err != nil {

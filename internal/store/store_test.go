@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/richardwooding/forge/internal/capability"
 	"github.com/richardwooding/forge/internal/core"
 )
 
@@ -199,35 +198,6 @@ func TestGCKeepsABlobTwoRecordsShare(t *testing.T) {
 	}
 	if _, err := s.Blob(shared.WasmDigest); err != nil {
 		t.Errorf("GC removed a shared blob: %v", err)
-	}
-}
-
-func TestGrantsRoundTrip(t *testing.T) {
-	s := open(t)
-	digest, err := s.PutBlob([]byte("wasm"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := Record{
-		Spec:       core.Spec{Name: "net", ABI: core.ABICurrent},
-		WasmDigest: digest,
-		Grants: []capability.Grant{
-			{Kind: capability.NetHTTP, Scope: []string{"api.example.com"}},
-		},
-	}
-	if err := s.Put(rec); err != nil {
-		t.Fatal(err)
-	}
-	got, err := s.Get("net")
-	if err != nil {
-		t.Fatal(err)
-	}
-	set := got.GrantSet()
-	if !set.Allow(capability.NetHTTP, "api.example.com").OK {
-		t.Error("grant did not survive the round trip")
-	}
-	if set.Allow(capability.NetHTTP, "evil.test").OK {
-		t.Error("grant widened on the round trip")
 	}
 }
 

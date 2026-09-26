@@ -188,12 +188,14 @@ func TestReplacingDoesNotInheritGrants(t *testing.T) {
 	if len(res.Replaced) != 1 {
 		t.Fatalf("replaced %v", res.Replaced)
 	}
-	rec, err := to.Get("greeter")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rec.Grants) != 0 {
-		t.Errorf("the replacement inherited grants: %v", rec.Grants)
+	// Assert on the policy, which is what actually decides what a tool may
+	// do. This test used to check store.Record.Grants -- a field nothing read
+	// at invoke time -- so it passed for the whole time the bug was live: a
+	// stranger's module, imported over a granted name, kept the grant and was
+	// never asked about, while the command printed "nothing is granted by
+	// importing".
+	if got := to.Policy().Granted("greeter"); len(got.Kinds()) != 0 {
+		t.Errorf("the replacement inherited grants: %v", got.Kinds())
 	}
 }
 

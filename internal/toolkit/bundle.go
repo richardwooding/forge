@@ -178,6 +178,23 @@ func (tk *Toolkit) Import(ctx context.Context, r io.Reader, policy OnConflict) (
 		if err := tk.store.Put(rec); err != nil {
 			return nil, err
 		}
+
+		// Replacing a name means the grants that name holds were earned by a
+		// different module. Import said so in its doc comment and the command
+		// printed "nothing is granted by importing", but nothing revoked
+		// them: an imported module inherited whatever its predecessor had been
+		// approved for, and ran without ever being asked about.
+		//
+		// The intersection with the new spec meant it could not exceed the old
+		// grant, so this was not an escalation -- but a module from elsewhere
+		// running under capabilities approved for someone else's code is the
+		// thing the message promised would not happen.
+		if p.existed {
+			if err := tk.policy.Revoke(p.name); err != nil {
+				return nil, fmt.Errorf("replacing %q: cannot clear the grants its predecessor held: %w", p.name, err)
+			}
+		}
+
 		tk.invalidate(p.name)
 
 		switch {

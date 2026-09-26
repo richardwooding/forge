@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/richardwooding/forge/internal/build"
-	"github.com/richardwooding/forge/internal/capability"
 	"github.com/richardwooding/forge/internal/core"
 	"github.com/richardwooding/forge/internal/statefile"
 )
@@ -44,10 +43,6 @@ type Record struct {
 	// ExtraLabels are labels the user added after installing, kept apart from
 	// the tool's own so that reinstalling it does not discard them.
 	ExtraLabels []string `json:"extraLabels,omitempty"`
-
-	// Grants are what the user agreed this tool may do. Absent until they have
-	// been asked, which is what makes the first use of a capability a prompt.
-	Grants []capability.Grant `json:"grants,omitempty"`
 
 	Build  build.Provenance `json:"build,omitzero"`
 	Source string           `json:"source,omitempty"`
@@ -67,9 +62,6 @@ func (r Record) Labels() []string {
 	sort.Strings(out)
 	return out
 }
-
-// GrantSet is the record's grants as a capability set.
-func (r Record) GrantSet() capability.Set { return capability.NewSet(r.Grants...) }
 
 // Store is a directory of installed tools.
 type Store struct{ dir string }
