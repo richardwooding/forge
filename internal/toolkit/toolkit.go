@@ -463,6 +463,15 @@ func (tk *Toolkit) Invoke(ctx context.Context, c Call) (*Result, error) {
 			Message: err.Error(), Cause: err}
 	}
 
+	// Turn the granted filesystem scopes into mounts. Without this the jail is
+	// never installed and every file operation in the guest fails, however
+	// healthy the grant looks.
+	mounts, err := mountsFor(grants)
+	if err != nil {
+		return nil, &binding.Fault{Code: binding.FaultInvalidInput, Tool: c.Tool, Op: c.Op,
+			Message: err.Error(), Cause: err}
+	}
+
 	wasm, err := tk.store.Blob(rec.WasmDigest)
 	if err != nil {
 		return nil, internalFault(c.Tool, err)
@@ -478,6 +487,7 @@ func (tk *Toolkit) Invoke(ctx context.Context, c Call) (*Result, error) {
 		Opts: wasmrt.Options{
 			Tool:       c.Tool,
 			Grants:     grants,
+			Mounts:     mounts,
 			Timeout:    tk.cfg.InvokeTimeout,
 			OnLog:      c.OnLog,
 			OnProgress: c.OnProgress,

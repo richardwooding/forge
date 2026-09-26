@@ -207,9 +207,26 @@ func (a *App) cmdInfo() *cobra.Command {
 						fmt.Fprintf(out, "      %s\n", req.Reason)
 					}
 				}
-				granted := rec.GrantSet()
-				if len(granted.Kinds()) == 0 {
+				if len(a.tk.Policy().Granted(rec.Spec.Name).Kinds()) == 0 {
 					fmt.Fprintf(out, "    (nothing granted yet; you will be asked on first use)\n")
+				}
+			}
+
+			// What was actually granted, from the policy -- which is where
+			// grants live. Reading the copy on the tool record made `forge
+			// info` report "nothing granted yet" for a tool that `forge grant
+			// ls` listed as granted, and the record was the wrong one: nothing
+			// ever writes a grant back to it.
+			//
+			// Printed outside the "wants" block on purpose. A grant can
+			// outlive the declaration that prompted it, when an upgrade drops
+			// a capability the previous version asked for, and a lingering
+			// grant that nothing displays is the harder kind to notice.
+			if granted := a.tk.Policy().Granted(rec.Spec.Name); len(granted.Kinds()) > 0 {
+				fmt.Fprintf(out, "\n  granted:\n")
+				for _, k := range granted.Kinds() {
+					fmt.Fprintf(out, "    %s %-12s %s\n",
+						k.Badge(), k, strings.Join(granted.Scopes(k), ", "))
 				}
 			}
 

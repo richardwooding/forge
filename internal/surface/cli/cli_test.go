@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/richardwooding/forge/internal/binding"
+	"github.com/richardwooding/forge/internal/capability"
 	"github.com/richardwooding/forge/internal/labels"
 	"github.com/richardwooding/forge/internal/store"
 	"github.com/richardwooding/forge/internal/surface/cli"
@@ -344,3 +345,40 @@ func installSecond(t *testing.T, tk *toolkit.Toolkit) {
 }
 
 var _ = store.Record{}
+
+// TestInfoAndGrantLsAgree pins the fix for the second half of issue #5.
+//
+// `forge grant ls` read the policy, which is where grants live, while
+// `forge info` read a copy on the tool record that nothing ever writes a grant
+// back to. The two disagreed about the same tool in the same terminal: one
+// listed the grant as held, the other said nothing was granted yet. Anything
+// reporting what a tool may do has to ask the one place that decides it.
+func TestInfoAndGrantLsAgree(t *testing.T) {
+	tk := fixture(t)
+
+	name := "hello"
+	if err := tk.Policy().Grant(name, []capability.Grant{
+		{Kind: capability.NetHTTP, Scope: []string{"api.example.com"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	grantOut, _, code := run(t, tk, labels.All, "grant", "ls")
+	if code != 0 {
+		t.Fatalf("grant ls exited %d", code)
+	}
+	if !strings.Contains(grantOut, "api.example.com") {
+		t.Fatalf("grant ls does not show the grant: %s", grantOut)
+	}
+
+	infoOut, _, code := run(t, tk, labels.All, "info", name)
+	if code != 0 {
+		t.Fatalf("info exited %d", code)
+	}
+	if strings.Contains(infoOut, "nothing granted yet") {
+		t.Errorf("info says nothing is granted while grant ls shows one:\n%s", infoOut)
+	}
+	if !strings.Contains(infoOut, "api.example.com") {
+		t.Errorf("info does not report the grant it holds:\n%s", infoOut)
+	}
+}
