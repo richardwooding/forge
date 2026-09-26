@@ -40,7 +40,15 @@ func (a *App) cmdMCP() *cobra.Command {
 			"add` already carries: building runs the Go toolchain, unsandboxed, over\n" +
 			"whatever source it is given. Off by default.",
 		RunE: func(c *cobra.Command, args []string) error {
-			mgr := mcpsrv.New(mcpsrv.Options{Toolkit: a.tk, MetaTools: metaTools, AllowInstall: allowInstall})
+			mgr := mcpsrv.New(mcpsrv.Options{
+				Toolkit:      a.tk,
+				Views:        a.tk.Views(),
+				MetaTools:    metaTools,
+				AllowInstall: allowInstall,
+			})
+			// A tool installed, or a view edited, from a terminal has to reach
+			// this server without it being restarted.
+			mgr.StartWatch(c.Context())
 
 			if addr == "" {
 				return a.serveStdio(c, mgr)

@@ -22,9 +22,9 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/richardwooding/forge/internal/capability"
+	"github.com/richardwooding/forge/internal/statefile"
 )
 
 // Answer is what a person said when asked.
@@ -159,26 +159,7 @@ type Policy struct {
 	mu    sync.RWMutex
 	state state
 	// stamp identifies the file contents this state was read from.
-	stamp fileStamp
-}
-
-// fileStamp is what Policy compares to decide whether its copy is still
-// current. Modification time alone is too coarse -- two writes within one
-// filesystem timestamp tick are entirely possible here, since a grant and a
-// revoke can land in the same second -- so the size is part of it, and a write
-// through this process records its own stamp directly rather than inferring
-// one.
-type fileStamp struct {
-	mod  time.Time
-	size int64
-}
-
-func stampOf(path string) (fileStamp, bool) {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return fileStamp{}, false
-	}
-	return fileStamp{mod: fi.ModTime(), size: fi.Size()}, true
+	stamp statefile.Stamp
 }
 
 // refresh re-reads the file when it has changed since this copy was made.
@@ -188,18 +169,18 @@ func stampOf(path string) (fileStamp, bool) {
 // say -- must not be treated as a policy that grants nothing, which would turn
 // a transient filesystem state into a wave of spurious refusals.
 func (p *Policy) refresh() {
-	stamp, ok := stampOf(p.path)
+	stamp := statefile.Of(p.path)
 
 	p.mu.RLock()
 	current := p.stamp
 	p.mu.RUnlock()
-	if !ok || stamp == current {
+	if !statefile.Changed(current, stamp) {
 		return
 	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.stamp == stamp {
+	if !statefile.Changed(p.stamp, stamp) {
 		return // another goroutine got there first
 	}
 	if err := p.loadLocked(); err != nil {
@@ -508,7 +489,7 @@ func (p *Policy) loadLocked() error {
 	if err != nil {
 		if os.IsNotExist(err) {
 			p.state = state{}
-			p.stamp = fileStamp{}
+			p.stamp = statefile.Zero
 			return nil
 		}
 		return err
@@ -521,9 +502,7 @@ func (p *Policy) loadLocked() error {
 	// Stamp after reading, so a write that lands between the stat and the read
 	// leaves a stamp that does not match and is picked up next time, rather
 	// than one that claims this copy is current when it is not.
-	if stamp, ok := stampOf(p.path); ok {
-		p.stamp = stamp
-	}
+	p.stamp = statefile.Of(p.path)
 	return nil
 }
 
@@ -540,9 +519,7 @@ func (p *Policy) save() error {
 	}
 	// Record our own write, so the next read does not mistake it for someone
 	// else's and reload what it already has.
-	if stamp, ok := stampOf(p.path); ok {
-		p.stamp = stamp
-	}
+	p.stamp = statefile.Of(p.path)
 	return nil
 }
 

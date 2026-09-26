@@ -25,6 +25,7 @@ import (
 	"github.com/richardwooding/forge/internal/labels"
 	"github.com/richardwooding/forge/internal/store"
 	"github.com/richardwooding/forge/internal/toolkit"
+	"github.com/richardwooding/forge/internal/view"
 )
 
 // Version is reported to clients.
@@ -40,6 +41,11 @@ const inlineLimit = 256 << 10
 // Options configure a manager.
 type Options struct {
 	Toolkit *toolkit.Toolkit
+
+	// Views resolves a named view's selector. When set, a server rebuilt by
+	// Sync picks up a selector the user has since edited; without it a view's
+	// meaning is fixed at the moment its server was first built.
+	Views *view.Store
 
 	// MetaTools adds forge_search_tools and forge_describe_tool, which let an
 	// agent discover tools outside its view without those tools' schemas being
@@ -66,7 +72,10 @@ type Manager struct {
 }
 
 type entry struct {
-	server   *mcp.Server
+	server *mcp.Server
+	// name is the view this server serves, empty for the default. Sync
+	// re-resolves it, so editing a view reaches a server already running.
+	name     string
 	selector labels.Selector
 	// names is what the server currently exposes, so a registry change can be
 	// applied as a diff rather than by rebuilding.
@@ -103,7 +112,7 @@ func (m *Manager) Server(key string, sel labels.Selector) (*mcp.Server, error) {
 		Version: Version,
 	}, nil)
 
-	e := &entry{server: srv, selector: sel, names: map[string]bool{}}
+	e := &entry{server: srv, name: key, selector: sel, names: map[string]bool{}}
 	m.servers[key] = e
 
 	if err := m.syncLocked(e); err != nil {
@@ -136,6 +145,20 @@ func (m *Manager) Sync() error {
 }
 
 func (m *Manager) syncLocked(e *entry) error {
+	// Re-resolve the view first: `forge view set` in a terminal has to reach a
+	// server that is already running, and a stale selector would keep serving
+	// the old set however fresh the store is.
+	if e.name != "" && m.opts.Views != nil {
+		if sel, _, err := m.opts.Views.Resolve(e.name, ""); err == nil {
+			e.selector = sel
+		} else {
+			// The view was deleted. Serving nothing is the safe reading: this
+			// surface's view is its only access boundary, so falling back to
+			// everything would widen exposure on a deletion.
+			e.selector = labels.None
+		}
+	}
+
 	records, err := m.opts.Toolkit.List(e.selector)
 	if err != nil {
 		return err
@@ -305,4 +328,25 @@ func renderResult(tool, op string, res *toolkit.Result) *mcp.CallToolResult {
 		})
 	}
 	return out
+}
+
+// StartWatch keeps every live server in step with the store and the views
+// until ctx is done.
+//
+// Without it, a server's tool set only ever changed when forge_add_tool ran
+// inside the same process, so `forge tool add` from a terminal was invisible
+// to an agent already connected -- with no notification either, because
+// nothing called Sync for the SDK to notice. AddTool and RemoveTools fire
+// tools/list_changed themselves, so all that was missing was something to
+// trigger the diff.
+func (m *Manager) StartWatch(ctx context.Context) {
+	events := m.opts.Toolkit.Watch(ctx)
+	go func() {
+		for range events {
+			// An error here is not worth ending the watch for: the next event
+			// tries again, and a server that stops watching is exactly the
+			// failure this exists to prevent.
+			_ = m.Sync()
+		}
+	}()
 }

@@ -28,6 +28,7 @@ import (
 	"github.com/richardwooding/forge/internal/build"
 	"github.com/richardwooding/forge/internal/capability"
 	"github.com/richardwooding/forge/internal/core"
+	"github.com/richardwooding/forge/internal/statefile"
 )
 
 // ErrNotFound is returned for a tool the store does not hold.
@@ -85,6 +86,17 @@ func Open(dir string) (*Store, error) {
 
 // Dir is the store's root.
 func (s *Store) Dir() string { return s.dir }
+
+// Stamp summarises the installed set cheaply, so a caller can tell that
+// something changed without reading every record.
+//
+// The store itself never caches -- List and Get read from disk every time --
+// so this is not about the store being stale. It is for the surfaces built
+// from it: an MCP server holds a set of registered tools that only changes
+// when something tells it to, and this is what tells it.
+func (s *Store) Stamp() statefile.Stamp {
+	return statefile.OfDir(filepath.Join(s.dir, "tools"), ".json")
+}
 
 func (s *Store) blobPath(digest string) string {
 	return filepath.Join(s.dir, "blobs", "sha256", digest[:2], digest)
