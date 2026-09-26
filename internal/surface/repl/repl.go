@@ -16,12 +16,15 @@ package repl
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/richardwooding/forge/internal/labels"
+	"github.com/richardwooding/forge/internal/policy"
 	"github.com/richardwooding/forge/internal/toolkit"
 	"github.com/richardwooding/forge/internal/ui"
 )
@@ -53,6 +56,7 @@ type Options struct {
 // Run starts the shell and returns when the user leaves.
 func Run(ctx context.Context, opts Options) error {
 	m := newModel(opts)
+	m.ctx = ctx
 	p := tea.NewProgram(m, tea.WithContext(ctx))
 	_, err := p.Run()
 	return err
@@ -63,12 +67,27 @@ type model struct {
 	theme ui.Theme
 	input textinput.Model
 
+	// ctx is the shell's own context, used for the commands it runs. Running
+	// them on context.Background() meant anything long-lived -- `serve`, `mcp`
+	// -- could not be cancelled by leaving the shell.
+	ctx context.Context
+
 	history []string
 	histPos int // len(history) means "not browsing"
+
+	// width is the terminal's, from the last WindowSizeMsg. It has to reach
+	// the text input: with a width of zero, bubbles sizes its placeholder
+	// buffer to one rune and renders only the first letter of it, and turns
+	// off horizontal scrolling so a long line wraps instead.
+	width int
 
 	busy bool
 	quit bool
 }
+
+// fallbackWidth is used until the first WindowSizeMsg arrives, so the input is
+// never left at zero width even for one frame.
+const fallbackWidth = 80
 
 // newPlainTheme is an unstyled theme, so a test asserts on text rather than on
 // escape sequences.
@@ -76,14 +95,21 @@ func newPlainTheme() ui.Theme { return ui.New(false, true) }
 
 func newModel(opts Options) *model {
 	ti := textinput.New()
+	// textinput.New defaults Prompt to "> ". The shell draws its own prompt,
+	// so leaving that set renders both: `forge› > `.
+	ti.Prompt = ""
 	ti.Placeholder = "a tool name, or :help"
 	ti.Focus()
+	// The real terminal cursor is placed by View. Disabling the virtual one
+	// without doing that leaves no cursor at all.
 	ti.SetVirtualCursor(false)
+	ti.SetWidth(fallbackWidth)
 
 	return &model{
 		opts:  opts,
-		theme: ui.New(true, true),
+		theme: ui.ForWriter(os.Stdout),
 		input: ti,
+		width: fallbackWidth,
 	}
 }
 
@@ -132,6 +158,14 @@ type ranMsg struct {
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		// Forwarding this to the input is not optional: it is what gives the
+		// placeholder room to render in full and what turns on horizontal
+		// scrolling for lines longer than the terminal.
+		m.width = msg.Width
+		m.resizeInput()
+		return m, nil
+
 	case tea.KeyPressMsg:
 		return m.onKey(msg)
 
@@ -254,7 +288,25 @@ func (m *model) submit() (tea.Model, tea.Cmd) {
 // dispatch runs a line through the CLI's own command tree.
 func (m *model) dispatch(args []string) tea.Cmd {
 	return func() tea.Msg {
-		stdout, stderr, err := m.opts.Dispatcher.Dispatch(context.Background(), args)
+		ctx := m.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+
+		// A capability prompt must not be attempted from in here. The terminal
+		// prompter writes to os.Stderr and reads os.Stdin directly, and Bubble
+		// Tea holds that same descriptor in raw mode -- so the question would
+		// be drawn straight past the renderer and the two would race for the
+		// keystroke.
+		//
+		// Reporting "nobody to ask" rather than "denied" is the part that
+		// matters: a refusal is recorded, so answering for the user here would
+		// permanently disable the tool on every surface. That was issue #2.
+		// Unavailable is not recorded, and its message already names the
+		// command that fixes it.
+		ctx = toolkit.WithPrompter(ctx, policy.Answered(policy.Unavailable))
+
+		stdout, stderr, err := m.opts.Dispatcher.Dispatch(ctx, args)
 		return ranMsg{stdout: stdout, stderr: stderr, err: err}
 	}
 }
@@ -309,16 +361,42 @@ func (m *model) browseHistory(delta int) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *model) View() tea.View {
-	if m.quit {
-		return tea.NewView("")
-	}
-	prompt := m.theme.Name.Render("forge")
+// prompt is the text drawn before the input. View and resizeInput share it so
+// the cursor offset and the input's usable width can never disagree about how
+// wide it is.
+func (m *model) prompt() string {
+	p := m.theme.Name.Render("forge")
 	if m.opts.ViewName != "" {
-		prompt += m.theme.Subtle.Render(":" + m.opts.ViewName)
+		p += m.theme.Subtle.Render(":" + m.opts.ViewName)
 	}
 	if m.busy {
-		prompt += m.theme.Warm.Render(" …")
+		p += m.theme.Warm.Render(" …")
 	}
-	return tea.NewView(prompt + m.theme.Subtle.Render("› ") + m.input.View())
+	return p + m.theme.Subtle.Render("› ")
+}
+
+// resizeInput gives the input whatever the prompt leaves.
+func (m *model) resizeInput() {
+	w := max(m.width-lipgloss.Width(m.prompt()), 1)
+	m.input.SetWidth(w)
+}
+
+func (m *model) View() tea.View {
+	if m.quit {
+		// No cursor on the way out, so the shell leaves no caret behind.
+		return tea.NewView("")
+	}
+
+	prompt := m.prompt()
+	v := tea.NewView(prompt + m.input.View())
+
+	// The input's own cursor was turned off in newModel, so the real one has
+	// to be placed here, shifted past the prompt. lipgloss.Width, not len:
+	// the prompt carries ANSI styling and counting its bytes would put the
+	// caret many columns to the right of where the text is.
+	if c := m.input.Cursor(); c != nil {
+		c.X += lipgloss.Width(prompt)
+		v.Cursor = c
+	}
+	return v
 }

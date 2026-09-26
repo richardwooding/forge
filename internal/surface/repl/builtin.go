@@ -46,10 +46,15 @@ func (m *model) help() string {
 		{"tab", "complete a tool name or a flag"},
 		{"up / down", "walk back through what you have typed"},
 	}
-	var b strings.Builder
+	// ui.Table rather than %-18s: the cells are styled, and %-Ns pads by byte
+	// count, so every escape sequence pushes the second column further right.
+	// That is the same reason ui.Table exists instead of text/tabwriter.
+	tb := m.theme.NewTable()
 	for _, r := range rows {
-		fmt.Fprintf(&b, "  %-18s %s\n", m.theme.Bold.Render(r[0]), m.theme.Subtle.Render(r[1]))
+		tb.Row("  "+m.theme.Bold.Render(r[0]), m.theme.Subtle.Render(r[1]))
 	}
+	var b strings.Builder
+	tb.Render(&b)
 	return strings.TrimRight(b.String(), "\n")
 }
 
@@ -109,13 +114,15 @@ func (m *model) listViews() string {
 	}
 	active := m.opts.Toolkit.Views().ActiveName()
 	var b strings.Builder
+	tb := m.theme.NewTable()
 	for _, v := range views {
 		marker := " "
 		if v.Name == active {
 			marker = "*"
 		}
-		fmt.Fprintf(&b, "%s %-14s %s\n", marker, m.theme.Name.Render(v.Name), m.theme.Subtle.Render(v.Selector))
+		tb.Row(marker, m.theme.Name.Render(v.Name), m.theme.Subtle.Render(v.Selector))
 	}
+	tb.Render(&b)
 	return strings.TrimRight(b.String(), "\n")
 }
 
@@ -131,9 +138,9 @@ func (m *model) listTools() string {
 		return m.theme.Subtle.Render("no tools in " + m.viewLabel())
 	}
 	var b strings.Builder
+	tb := m.theme.NewTable()
 	for _, rec := range records {
-		fmt.Fprintf(&b, "  %-16s %s  %s\n",
-			m.theme.Name.Render(rec.Spec.Name),
+		tb.Row("  "+m.theme.Name.Render(rec.Spec.Name),
 			m.theme.Chips(rec.Labels()),
 			m.theme.Subtle.Render(rec.Spec.Summary))
 	}

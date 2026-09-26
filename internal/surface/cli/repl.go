@@ -18,7 +18,7 @@ func (a *App) cmdREPL() *cobra.Command {
 			"Every line goes through the same command tree `forge` itself uses, so\n" +
 			"nothing here can behave differently from the CLI.",
 		RunE: func(c *cobra.Command, args []string) error {
-			if !isTerminal(c.OutOrStdout()) {
+			if !isTTY(c.OutOrStdout()) {
 				return errors.New("forge repl needs a terminal; pipe into `forge run` instead")
 			}
 			return repl.Run(c.Context(), repl.Options{
