@@ -9,6 +9,11 @@
 # the diff check in CI is for.
 web:
 	cd web && npm ci && npm run build
+	# vite empties outDir, which takes .gitkeep with it. That file is what
+	# keeps `//go:embed all:dist` compiling in a tree where the GUI has never
+	# been built -- without it, `go build ./...` fails for everyone the moment
+	# dist is empty.
+	touch web/dist/.gitkeep
 
 web-clean:
 	rm -rf web/dist && mkdir -p web/dist && touch web/dist/.gitkeep
