@@ -21,6 +21,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/richardwooding/forge/internal/binding"
 	"github.com/richardwooding/forge/internal/core"
 	"github.com/richardwooding/forge/internal/labels"
 	"github.com/richardwooding/forge/internal/store"
@@ -167,7 +168,7 @@ func (m *Manager) syncLocked(e *entry) error {
 	want := map[string]bool{}
 	for _, rec := range records {
 		for _, op := range rec.Spec.Ops {
-			name := toolName(rec.Spec.Name, op.Name, len(rec.Spec.Ops) == 1)
+			name := binding.SurfaceName(rec.Spec.Name, op.Name, len(rec.Spec.Ops) == 1)
 			want[name] = true
 			if e.names[name] {
 				continue
@@ -192,18 +193,6 @@ func (m *Manager) syncLocked(e *entry) error {
 	}
 	e.names = want
 	return nil
-}
-
-// toolName is how a forge operation is named to MCP.
-//
-// A single-operation tool keeps its own name, because "jsonfmt" reads better
-// than "jsonfmt_format" and most tools have one operation. Several operations
-// are distinguished by suffix.
-func toolName(tool, op string, single bool) string {
-	if single {
-		return tool
-	}
-	return tool + "_" + op
 }
 
 // buildTool turns one operation into an MCP tool and its handler.

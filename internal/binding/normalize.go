@@ -24,6 +24,28 @@ type Bound struct {
 	// CanonJSON is the canonical input schema. Every surface must advertise
 	// exactly these bytes; the conformance suite compares them.
 	CanonJSON []byte
+
+	// Name is what every surface calls this operation: an MCP tool name, a
+	// REST path segment, an OpenAPI operationId, a gRPC method after mangling.
+	//
+	// It lives here rather than in each surface so the four cannot drift. If
+	// REST called it "jsonfmt/format" while MCP called it "jsonfmt_format",
+	// nothing would break -- and a person moving between the two would have to
+	// learn both, which is the same failure as an incompatible schema, only
+	// quieter.
+	Name string
+}
+
+// SurfaceName is how a tool's operation is named on every surface.
+//
+// A single-operation tool keeps its own name, because "jsonfmt" reads better
+// than "jsonfmt_format" and most tools have one operation. Several operations
+// are distinguished by suffix.
+func SurfaceName(tool, op string, single bool) string {
+	if single {
+		return tool
+	}
+	return tool + "_" + op
 }
 
 // Bind derives the per-operation data from a loaded manifest.
@@ -38,6 +60,7 @@ func Bind(l *manifest.Loaded, opName string) (*Bound, error) {
 		Resolved:  l.Resolved[opName],
 		Flags:     BuildFlags(op.Input),
 		CanonJSON: l.CanonJSON[opName],
+		Name:      SurfaceName(l.Spec.Name, op.Name, len(l.Spec.Ops) == 1),
 	}, nil
 }
 
