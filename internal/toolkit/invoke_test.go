@@ -22,6 +22,15 @@ import (
 	"github.com/richardwooding/forge/internal/toolkit"
 )
 
+// forgeTestCache is shared by every test package that builds a wasm tool.
+//
+// One directory rather than one per package because the first wasip1 build on
+// a cold cache compiles the whole standard library for that target, and a
+// cache per package pays that cost once per package -- which on CI was most
+// of the run. Go's build cache is content-addressed, so sharing it is what it
+// is for, not a shortcut.
+const forgeTestCache = "forge-test-cache"
+
 // callerSource calls another tool and reports what came back.
 const callerSource = `package main
 
@@ -118,7 +127,7 @@ func invokeFixture(t *testing.T) *toolkit.Toolkit {
 	tk, err := toolkit.New(ctx, toolkit.Config{
 		Paths: toolkit.Paths{
 			Data:   filepath.Join(home, "data"),
-			Cache:  filepath.Join(os.TempDir(), "forge-test-invokecache"),
+			Cache:  filepath.Join(os.TempDir(), forgeTestCache),
 			Config: filepath.Join(home, "config"),
 		},
 		SDKReplace: sdk,

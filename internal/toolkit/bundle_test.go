@@ -50,7 +50,7 @@ func newHome(t *testing.T) *toolkit.Toolkit {
 	tk, err := toolkit.New(context.Background(), toolkit.Config{
 		Paths: toolkit.Paths{
 			Data:   filepath.Join(home, "data"),
-			Cache:  filepath.Join(os.TempDir(), "forge-test-bundlecache"),
+			Cache:  filepath.Join(os.TempDir(), forgeTestCache),
 			Config: filepath.Join(home, "config"),
 		},
 		SDKReplace: sdk,

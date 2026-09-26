@@ -58,7 +58,7 @@ func needyToolkit(t *testing.T) *toolkit.Toolkit {
 	tk, err := toolkit.New(ctx, toolkit.Config{
 		Paths: toolkit.Paths{
 			Data:   filepath.Join(home, "data"),
-			Cache:  filepath.Join(os.TempDir(), "forge-test-mcpcache"),
+			Cache:  filepath.Join(os.TempDir(), forgeTestCache),
 			Config: filepath.Join(home, "config"),
 		},
 		SDKReplace: sdk,
