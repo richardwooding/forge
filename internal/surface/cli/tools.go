@@ -22,7 +22,7 @@ var reserved = map[string]bool{
 	"tool": true, "run": true, "ls": true, "list": true, "info": true,
 	"view": true, "label": true, "grant": true, "serve": true, "mcp": true,
 	"repl": true, "doctor": true, "help": true, "completion": true,
-	"version": true,
+	"version": true, "export": true, "import": true, "push": true, "pull": true,
 }
 
 // addToolCommands attaches one subcommand per in-view tool.

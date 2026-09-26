@@ -29,6 +29,8 @@ func (a *App) addManageCommands(root *cobra.Command) {
 		a.cmdREPL(),
 		a.cmdDoctor(),
 		a.cmdVersion(),
+		a.cmdExport(),
+		a.cmdImport(),
 	)
 }
 
