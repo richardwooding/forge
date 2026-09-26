@@ -1,0 +1,170 @@
+# GoReleaser configuration for forge.
+# Docs: https://goreleaser.com
+#
+# Container images use dockers_v2 + a Containerfile rather than a ko static
+# base, for a reason particular to forge: `forge tool add` compiles Go source
+# to WebAssembly with the real toolchain, so an image without Go in it is a
+# forge that cannot do the thing forge is for. The image is correspondingly
+# large; a smaller one that only serves already-built tools becomes worth
+# shipping once bundles land, and is noted in the README.
+version: 2
+
+project_name: forge
+
+# The guest SDK is a nested module with its own tags (sdk/vX.Y.Z). Those are
+# not forge releases, and without this GoReleaser reads the most recent one as
+# the current tag -- which fails outright on a snapshot, and would pick the
+# wrong "previous" tag when generating a changelog for a real release.
+git:
+  ignore_tags:
+    - "sdk/*"
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: forge
+    main: ./cmd/forge
+    binary: forge
+    env:
+      - CGO_ENABLED=0 # pure Go throughout: wazero is the wasm runtime, no cgo
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/richardwooding/forge/internal/buildinfo.version={{ .Version }}
+      - -X github.com/richardwooding/forge/internal/buildinfo.commit={{ .Commit }}
+      - -X github.com/richardwooding/forge/internal/buildinfo.date={{ .Date }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: archives
+    ids:
+      - forge
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "Merge pull request"
+      - "Merge branch"
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Others
+      order: 999
+
+# Multi-arch image on ghcr.io. GoReleaser stages the built binaries in the
+# build context as <os>/<arch>/forge; the Containerfile copies
+# $TARGETPLATFORM/forge.
+dockers_v2:
+  - id: forge
+    ids:
+      - forge
+    dockerfile: Containerfile
+    images:
+      - ghcr.io/richardwooding/forge
+    tags:
+      - "{{ .Version }}"
+      - "{{ .Major }}.{{ .Minor }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    sbom: "true"
+    labels: &image_labels
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.description: "A multitool that builds itself: Go programs compiled to WebAssembly, sandboxed by the capabilities they declare, exposed over CLI, REPL, MCP, REST and gRPC at once"
+      org.opencontainers.image.source: "https://github.com/richardwooding/forge"
+      org.opencontainers.image.url: "https://github.com/richardwooding/forge"
+      org.opencontainers.image.licenses: "MIT"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .Commit }}"
+      org.opencontainers.image.created: "{{ .Date }}"
+    annotations: *image_labels
+
+# Homebrew cask (macOS + Linuxbrew) in the shared tap.
+homebrew_casks:
+  - name: forge
+    binaries:
+      - forge
+    repository:
+      owner: richardwooding
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    commit_msg_template: "Brew cask update for {{ .ProjectName }} {{ .Tag }}"
+    homepage: "https://github.com/richardwooding/forge"
+    description: "Compile Go programs to sandboxed WebAssembly tools, exposed over CLI, REPL, MCP, REST and gRPC at once"
+    # The released binary is unsigned and un-notarized, so macOS Gatekeeper
+    # attaches a quarantine attribute that blocks it on first run. Strip it on
+    # install so `forge` just works.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/forge"]
+          end
+    caveats: |
+      forge is not yet signed or notarized with an Apple Developer ID; the cask
+      removes the quarantine attribute on install. If macOS still blocks it:
+        sudo xattr -dr com.apple.quarantine $(brew --prefix)/bin/forge
+
+      Building a tool needs a Go toolchain on PATH: `forge tool add` compiles
+      the source to WebAssembly with it. Running an already-installed tool does
+      not. `forge doctor` says which of those you have.
+
+release:
+  github:
+    owner: richardwooding
+    name: forge
+  header: |
+    ## Install
+
+    ```sh
+    brew install --cask richardwooding/tap/forge
+    go install github.com/richardwooding/forge/cmd/forge@{{ .Tag }}
+    podman run --rm -it ghcr.io/richardwooding/forge:{{ .Version }} --help
+    ```
+
+    Building a tool needs a Go toolchain; running one does not.
+  footer: |
+    ---
+
+    Tools are written against the SDK, which is versioned separately:
+
+    ```go
+    import "github.com/richardwooding/forge/sdk/tool"
+    ```

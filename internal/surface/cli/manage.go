@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/richardwooding/forge/internal/buildinfo"
 	"github.com/richardwooding/forge/internal/capability"
 	"github.com/richardwooding/forge/internal/labels"
 	"github.com/richardwooding/forge/internal/store"
@@ -27,6 +28,7 @@ func (a *App) addManageCommands(root *cobra.Command) {
 		a.cmdServe(),
 		a.cmdREPL(),
 		a.cmdDoctor(),
+		a.cmdVersion(),
 	)
 }
 
@@ -272,6 +274,7 @@ func (a *App) cmdDoctor() *cobra.Command {
 		RunE: func(c *cobra.Command, args []string) error {
 			out := c.OutOrStdout()
 			th := ui.ForWriter(out)
+			fmt.Fprintf(out, "  %s\n", th.OK("forge            %s", buildinfo.Version()))
 			if v, ok := a.tk.GoAvailable(c.Context()); ok {
 				fmt.Fprintf(out, "  %s\n", th.OK("go toolchain    %s", v))
 			} else {

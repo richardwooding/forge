@@ -29,6 +29,28 @@ to `git || json` and every surface shrinks with it — above all the MCP tool li
 so fifty installed tools stop costing your agent fifty tools' worth of context on
 every request.
 
+## Install
+
+```sh
+brew install --cask richardwooding/tap/forge
+go install github.com/richardwooding/forge/cmd/forge@latest
+```
+
+Building a tool needs a Go toolchain on PATH — `forge tool add` compiles the
+source to WebAssembly with it. Running an already-installed tool does not.
+`forge doctor` says which of those you have.
+
+### Container
+
+```sh
+podman run --rm -v forge-data:/home/forge/.local/share/forge \
+  ghcr.io/richardwooding/forge tool add /src
+```
+
+The image carries the Go toolchain, because a forge that cannot compile is not
+forge. Mount a volume over `~/.local/share/forge` or installed tools vanish
+with the container.
+
 ## Status
 
 The CLI and MCP surfaces work. REPL, OpenAPI and gRPC are next, and export /
