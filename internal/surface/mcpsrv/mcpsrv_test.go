@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -432,5 +433,35 @@ func TestDescribeToolExplainsAnOutOfViewTool(t *testing.T) {
 	}
 	if !strings.Contains(text.Text, "doubled") && !strings.Contains(text.Text, "properties") {
 		t.Errorf("describe did not include the schema: %q", text.Text)
+	}
+}
+
+// TestSkillToolFollowsMetaTools pins where forge_install_skill is registered.
+//
+// It was first written outside the MetaTools flag, on the reasoning that
+// writing a Markdown file is harmless. The view tests caught it: a server told
+// to expose no meta-tools was still exposing one, which turns "an unknown view
+// serves nothing" into "an unknown view confirms forge is listening here".
+func TestSkillToolFollowsMetaTools(t *testing.T) {
+	for _, meta := range []bool{true, false} {
+		t.Run(strconv.FormatBool(meta), func(t *testing.T) {
+			tk := fixture(t)
+			mgr := mcpsrv.New(mcpsrv.Options{Toolkit: tk, MetaTools: meta})
+			srv, err := mgr.Server("demo", labels.MustParse("demo"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var found bool
+			for _, n := range listNames(t, connect(t, srv)) {
+				if n == "forge_install_skill" {
+					found = true
+				}
+			}
+			if found != meta {
+				t.Errorf("forge_install_skill present=%v with MetaTools=%v; it belongs behind that flag",
+					found, meta)
+			}
+		})
 	}
 }

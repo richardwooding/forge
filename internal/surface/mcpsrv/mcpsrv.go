@@ -122,7 +122,17 @@ func (m *Manager) Server(key string, sel labels.Selector) (*mcp.Server, error) {
 	}
 	if m.opts.MetaTools {
 		m.addMetaTools(srv, sel)
+		// A meta-tool like the others, so it lives behind the same flag: a
+		// server told to expose no meta-tools must expose none, or an unknown
+		// view stops serving nothing and starts confirming that forge is
+		// there.
+		//
+		// It is not behind AllowInstall, though, because nothing is compiled
+		// or run and the content cannot be chosen by the caller -- only where
+		// it lands, which is what the human is asked about.
+		m.addSkillTool(srv)
 	}
+
 	if m.opts.AllowInstall {
 		m.addInstallTool(srv, sel)
 	}
