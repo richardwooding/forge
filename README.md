@@ -173,6 +173,67 @@ into an `any` before sending them, which silently rounded every integer past
 2^53; and the REPL's dispatcher swallowed the difference between a tool that
 failed and one that succeeded.
 
+## What a tool can reach
+
+A tool declares what it needs, in its own source, with a reason you will read
+at approval time:
+
+```go
+Needs: []tool.Need{{
+    Kind:   tool.NetHTTP,
+    Scope:  []string{"api.github.com"},
+    Reason: "look up the pull requests you ask about",
+}},
+```
+
+forge asks once, records the answer, and gives the tool exactly that:
+
+| Capability | What it gets |
+|---|---|
+| `fs.read` / `fs.write` | one directory, through an `os.Root` jail — not a path check |
+| `net.http` | named hosts, through forge's own client |
+| `secret` | named secrets, read individually and audited |
+| `kv` | a named namespace of its own, persisting between runs |
+| `env` | named variables, never your environment wholesale |
+| `tool.invoke` | named other tools |
+
+The network capability is where most of the work went, because "allow this
+host" is not the same as "make this request safely":
+
+- Addresses are screened **in the dialler**, so the address that was checked is
+  the address that is dialled. Checking a name and letting the transport
+  resolve it again leaves the window DNS rebinding goes through.
+- Loopback, private ranges and link-local are refused. Link-local stays refused
+  even when loopback is deliberately allowed for local development — that range
+  is where cloud credentials live.
+- Redirects are not followed. A permitted host could otherwise send a tool
+  anywhere; the 3xx comes back with its `Location` so the tool can ask again,
+  which puts the new URL through the allowlist on its own merits.
+- `Authorization`, `Cookie`, `Host` and `Proxy-*` cannot be set by a tool.
+  Credentials belong in a secret, where they are named and each read is logged.
+
+Secrets are files under forge's config directory, mode 0600:
+
+```console
+$ forge secret set github-token          # typed, not echoed, not in your history
+$ forge secret ls                        # names only, never values
+```
+
+They are deliberately not environment variables. The environment is readable by
+everything in a process, cannot be audited per access, and would show up in the
+guest's own `os.Environ()` — handing a tool every secret the moment you granted
+it one.
+
+Developing a tool against a service on your own machine needs
+`FORGE_ALLOW_PRIVATE_NETWORK=1`, which permits loopback and private ranges.
+Link-local stays refused even then.
+
+**One combination is worth pausing over.** A tool holding both `secret` and
+`net.http` can send what it reads wherever it is allowed to reach. No sandbox
+prevents that; it is what both capabilities are for. forge shows the pair
+together at approval time so you can notice, rather than meeting two reasonable
+questions one after the other.
+
 ## Security
 
 `forge tool add` compiles Go source on your machine with the ordinary toolchain.

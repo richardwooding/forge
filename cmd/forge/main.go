@@ -31,6 +31,12 @@ func run() int {
 	tk, err := toolkit.New(ctx, toolkit.Config{
 		SDKReplace: os.Getenv("FORGE_SDK_DIR"),
 		Offline:    os.Getenv("FORGE_OFFLINE") != "",
+		// Lets a tool reach a service on this machine, for developing against
+		// a local API. An environment variable rather than a flag because it
+		// is a property of the machine you are on, not of one command -- and
+		// it is deliberately awkward to turn on. Link-local stays blocked
+		// either way, so this never opens the cloud metadata endpoint.
+		AllowPrivateNetwork: os.Getenv("FORGE_ALLOW_PRIVATE_NETWORK") != "",
 		// On a terminal this asks; anywhere else it denies, because a prompt
 		// written to a pipe is a hang rather than a question.
 		Prompter: cli.TerminalPrompter{},
