@@ -18,12 +18,16 @@ import (
 	"github.com/richardwooding/forge/internal/surface/grpcsvc"
 	"github.com/richardwooding/forge/internal/surface/mcpsrv"
 	"github.com/richardwooding/forge/internal/surface/rest"
+	"github.com/richardwooding/forge/web"
 
 	forgev1 "github.com/richardwooding/forge/grpcapi/forge/v1"
 )
 
 func (a *App) cmdServe() *cobra.Command {
 	var (
+		gui     bool
+		guiAddr string
+
 		addr        string
 		socket      string
 		allowOrigin []string
@@ -45,6 +49,15 @@ func (a *App) cmdServe() *cobra.Command {
 			"port. A TCP address is refused beyond localhost: there is no\n" +
 			"authentication yet, so binding wider would publish every tool you have.",
 		RunE: func(c *cobra.Command, args []string) error {
+			// Check the GUI before anything is built, bound or announced. A
+			// failure here should look like a refused command, not like a
+			// server that started and then fell over.
+			if gui && !web.Built() {
+				return fmt.Errorf("the GUI is not built into this binary.\n" +
+					"  Build it with:  make web\n" +
+					"  Then rebuild:   go build ./cmd/forge")
+			}
+
 			mgr := mcpsrv.New(mcpsrv.Options{
 				Toolkit:   a.tk,
 				Views:     a.tk.Views(),
@@ -120,11 +133,64 @@ func (a *App) cmdServe() *cobra.Command {
 				describe, describe, describe)
 			fmt.Fprintf(c.ErrOrStderr(), "  gRPC forge.v1.ToolService on the same address (h2c)\n")
 
+			// The GUI gets a listener of its own rather than a route on the
+			// mux above, and the reason is not tidiness.
+			//
+			// On one port, /ui/ would be behind a session cookie while /v1/
+			// next door was not, so any page that could reach the GUI's origin
+			// could drive tools through the API beside it -- and the obvious
+			// fix, adding the GUI's origin to --allow-origin, would open /v1/
+			// to it for everyone. Two listeners means the GUI's origin is
+			// never in any allowlist, and nothing reachable over the unix
+			// socket changes at all. It also keeps MCP and gRPC off the port a
+			// browser talks to, which is where neither belongs.
+			var guiSrv *http.Server
+			if gui {
+				guiLn, guiErr := listenLoopback(guiAddr)
+				if guiErr != nil {
+					return guiErr
+				}
+				defer func() { _ = guiLn.Close() }()
+
+				sess, sErr := web.NewSession()
+				if sErr != nil {
+					return sErr
+				}
+				authority := guiLn.Addr().String()
+				handler, hErr := web.Handler(web.Options{
+					Session:   sess,
+					API:       api.Handler(),
+					Authority: authority,
+				})
+				if hErr != nil {
+					if errors.Is(hErr, web.ErrNotBuilt) {
+						// Fail here, before the listener is announced and
+						// before the single-use token is spent. Serving a
+						// placeholder would burn the token on a page telling
+						// the reader to go and build something.
+						return fmt.Errorf("the GUI is not built into this binary.\n" +
+							"  Build it with:  make web\n" +
+							"  Then rebuild:   go build ./cmd/forge")
+					}
+					return hErr
+				}
+
+				// HTTP/1.1 only: a browser needs nothing more, and it keeps
+				// the gRPC dispatcher off this port entirely.
+				guiSrv = &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+				fmt.Fprintf(c.ErrOrStderr(), "  GUI  %s\n", web.URL(authority, sess.Token()))
+				fmt.Fprintf(c.ErrOrStderr(), "       that link works once; the session lasts until forge stops\n")
+				go func() { _ = guiSrv.Serve(guiLn) }()
+			}
+
 			go func() {
 				<-c.Context().Done()
 				shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
 				_ = srv.Shutdown(shutdown)
+				if guiSrv != nil {
+					_ = guiSrv.Shutdown(shutdown)
+				}
 				// GracefulStop blocks for as long as any server-stream is
 				// open, so it gets the same deadline rather than the power to
 				// hang shutdown indefinitely on one long InvokeStream.
@@ -148,6 +214,8 @@ func (a *App) cmdServe() *cobra.Command {
 	cmd.Flags().StringVar(&socket, "socket", "", "unix socket path (default: $XDG_RUNTIME_DIR/forge/forge.sock)")
 	cmd.Flags().StringArrayVar(&allowOrigin, "allow-origin", nil, "accept browser requests from this origin")
 	cmd.Flags().BoolVar(&metaTools, "meta-tools", true, "offer the MCP discovery meta-tools")
+	cmd.Flags().BoolVar(&gui, "gui", false, "serve the browser GUI on its own loopback port and print a single-use link")
+	cmd.Flags().StringVar(&guiAddr, "gui-addr", "127.0.0.1:0", "address for the GUI listener; loopback only")
 	return cmd
 }
 
@@ -165,18 +233,11 @@ func listen(addr, socket string) (net.Listener, string, error) {
 	}
 
 	if addr != "" {
-		host, _, err := net.SplitHostPort(addr)
+		ln, err := listenLoopback(addr)
 		if err != nil {
-			return nil, "", fmt.Errorf("--http %q: %w", addr, err)
+			return nil, "", fmt.Errorf("--http %w", err)
 		}
-		if host != "127.0.0.1" && host != "localhost" && host != "::1" {
-			return nil, "", fmt.Errorf("--http %q binds beyond localhost, which would expose every tool you have to the network without authentication; use 127.0.0.1", addr)
-		}
-		ln, err := net.Listen("tcp", addr)
-		if err != nil {
-			return nil, "", err
-		}
-		return ln, "http://" + addr, nil
+		return ln, "http://" + ln.Addr().String(), nil
 	}
 
 	if socket == "" {
@@ -201,6 +262,27 @@ func listen(addr, socket string) (net.Listener, string, error) {
 		return nil, "", err
 	}
 	return ln, "unix:" + socket, nil
+}
+
+// listenLoopback binds a TCP address, refusing anything that is not loopback.
+//
+// Shared by --http and --gui-addr so neither can be pointed at the network.
+// The API listener has no authentication at all, and the GUI's is a session
+// cookie meant for one browser on this machine; either bound wider would
+// publish every installed tool.
+//
+// It returns the listener rather than echoing the address back, because a port
+// of 0 means the kernel chooses and everything downstream -- the printed URL,
+// the origin check, the Host check -- has to agree on what it actually got.
+func listenLoopback(addr string) (net.Listener, error) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("%q: %w", addr, err)
+	}
+	if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+		return nil, fmt.Errorf("%q binds beyond localhost, which would expose every tool you have to the network; use 127.0.0.1", addr)
+	}
+	return net.Listen("tcp", addr)
 }
 
 func defaultSocket() string {

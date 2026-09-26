@@ -2,3 +2,6 @@
 /forge
 coverage.out
 *.wasm
+
+# The GUI bundle is committed; node_modules is not.
+web/node_modules/

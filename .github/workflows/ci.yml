@@ -73,6 +73,14 @@ jobs:
       # indirect. That drift went unnoticed until goreleaser's own `go mod
       # tidy` hook dirtied the tree mid-release, which is a bad place to find
       # out.
+      # The GUI's build output is committed, for the same reason grpcapi is:
+      # `go install` must work with only a Go toolchain. So it can drift from
+      # web/src, and only a diff notices. This step runs no node -- it fails
+      # only if someone hand-edited dist. The scheduled web-sync workflow is
+      # what actually rebuilds.
+      - name: the GUI build output is committed
+        run: git diff --exit-code -- web/dist
+
       - name: go.mod is tidy
         run: |
           go mod tidy

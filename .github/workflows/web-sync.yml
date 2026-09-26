@@ -1,0 +1,40 @@
+# Weekly check that the committed GUI bundle still matches a fresh build of
+# web/src, opening a PR when it drifts. Dependency bumps arrive via dependabot
+# on web/package.json; this keeps the built artifact honest.
+#
+# This is the only place node runs. Ordinary CI diff-checks web/dist without
+# installing anything, so a contributor never needs npm to build or test forge.
+name: web-sync
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: make web
+      - name: Open a PR if the bundle changed
+        run: |
+          if ! git diff --quiet -- web/dist; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            branch="web-sync-$(date +%Y%m%d)"
+            git checkout -b "$branch"
+            git add web/dist
+            git commit -m "chore: rebuild the GUI bundle"
+            git push -u origin "$branch"
+            gh pr create --fill --title "chore: rebuild the GUI bundle" \
+              --body "Automated rebuild of web/dist from web/src."
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

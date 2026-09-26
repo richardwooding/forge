@@ -1,0 +1,21 @@
+{
+  "name": "forge-gui",
+  "private": true,
+  "type": "module",
+  "description": "forge's optional browser GUI. Built output is committed to dist/ so `go install` needs no node; run `make web` after changing anything here.",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "watch": "vite build --watch"
+  },
+  "dependencies": {
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.0",
+    "@types/react-dom": "19.2.0",
+    "@vitejs/plugin-react": "5.0.4",
+    "typescript": "5.9.3",
+    "vite": "7.1.12"
+  }
+}
