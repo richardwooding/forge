@@ -244,6 +244,22 @@ type Options struct {
 
 	OnLog      func(level hostabi.Level, tool, msg string)
 	OnProgress func(done, total int64, msg string)
+
+	// Services back the capability host functions. A nil service is a
+	// capability this process cannot provide, which the guest is told about
+	// in those words -- never as a denial, which would send a tool author
+	// looking for a grant that was never the problem.
+	Services hostabi.Services
+
+	// CallPath is the chain of tools that led to this one, empty for a call
+	// that started at a surface. tool.invoke appends to it, and a tool already
+	// on the path is refused.
+	CallPath []string
+
+	// Budget is the allowance shared by a whole call tree. A nested call must
+	// pass the one it inherited; leaving it nil gets a fresh allowance, which
+	// is right only for a call that starts at a surface.
+	Budget *hostabi.Budget
 }
 
 // WriterTo is the subset of io.Writer the runtime needs, kept as its own name

@@ -1,0 +1,103 @@
+// Command capguest is a tool that exercises every capability host function.
+//
+// It exists to be compiled to wasip1 by the test and run for real, because
+// the SDK's guest-side ABI -- the size-then-fetch round trip, the envelope
+// decode, the denial type -- has no other honest test. A mock host would
+// re-implement the thing under test.
+package main
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/richardwooding/forge/sdk/tool"
+)
+
+type Args struct {
+	Do  string `json:"do"`
+	Arg string `json:"arg,omitempty"`
+}
+
+type Out struct {
+	Result string `json:"result"`
+	Denied bool   `json:"denied,omitempty"`
+	Code   string `json:"code,omitempty"`
+}
+
+var _ = tool.Register(tool.Spec{
+	Name:    "capguest",
+	Summary: "exercises the capability host functions",
+	Needs: []tool.Need{
+		{Kind: tool.NetHTTP, Scope: []string{"*"}, Reason: "the test drives it"},
+		{Kind: tool.KV, Scope: []string{"notes"}, Reason: "the test drives it"},
+		{Kind: tool.Secret, Scope: []string{"token"}, Reason: "the test drives it"},
+	},
+}, tool.Op("run", run))
+
+func main() {}
+
+func run(ctx *tool.Context, a Args) (Out, error) {
+	switch a.Do {
+	case "http":
+		res, err := tool.Get(a.Arg)
+		if err != nil {
+			return denied(err)
+		}
+		return Out{Result: fmt.Sprintf("%d:%s", res.Status, strings.TrimSpace(string(res.Body)))}, nil
+
+	case "http-headers":
+		_, err := tool.HTTP(tool.HTTPRequest{
+			URL:     a.Arg,
+			Headers: map[string]string{"Authorization": "Bearer hunter2"},
+		})
+		if err != nil {
+			return denied(err)
+		}
+		return Out{Result: "the header was accepted"}, nil
+
+	case "kv":
+		s := tool.OpenKV("notes")
+		if err := s.SetString("greeting", "hello"); err != nil {
+			return denied(err)
+		}
+		v, found, err := s.GetString("greeting")
+		if err != nil {
+			return denied(err)
+		}
+		keys, err := s.List("")
+		if err != nil {
+			return denied(err)
+		}
+		return Out{Result: fmt.Sprintf("%s/%v/%v", v, found, keys)}, nil
+
+	case "kv-forbidden":
+		if _, _, err := tool.OpenKV("other").Get("x"); err != nil {
+			return denied(err)
+		}
+		return Out{Result: "read an ungranted namespace"}, nil
+
+	case "secret":
+		v, found, err := tool.GetSecret(a.Arg)
+		if err != nil {
+			return denied(err)
+		}
+		return Out{Result: fmt.Sprintf("%s/%v", v, found)}, nil
+
+	case "invoke":
+		var out map[string]any
+		if err := tool.Call(a.Arg, "run", map[string]string{"do": "kv"}, &out); err != nil {
+			return denied(err)
+		}
+		return Out{Result: fmt.Sprint(out)}, nil
+	}
+	return Out{}, fmt.Errorf("capguest does not know how to %q", a.Do)
+}
+
+// denied reports a capability refusal as data rather than an error, so the
+// test can tell a denial apart from a tool that simply broke.
+func denied(err error) (Out, error) {
+	if d, ok := tool.Denied(err); ok {
+		return Out{Result: d.Error(), Denied: true, Code: d.Code}, nil
+	}
+	return Out{Result: err.Error()}, nil
+}

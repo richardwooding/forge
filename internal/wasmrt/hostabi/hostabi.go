@@ -65,6 +65,17 @@ type Limits struct {
 	MaxHostCallBytes int64
 	// MaxHostCalls caps the number of host calls.
 	MaxHostCalls int64
+
+	// MaxHTTPRequests caps outbound requests for one invocation.
+	MaxHTTPRequests int64
+	// MaxKVValueBytes caps one stored value.
+	MaxKVValueBytes int64
+	// MaxInvokes caps tool-to-tool calls across the whole call tree, and
+	// MaxInvokeDepth how deeply they may nest. Both are needed: depth alone
+	// does not bound fanout, and eight tools each calling eight is sixty-four
+	// however shallow the tree.
+	MaxInvokes     int64
+	MaxInvokeDepth int
 }
 
 // DefaultLimits are deliberately generous for logging and tight on totals: a
@@ -75,6 +86,10 @@ func DefaultLimits() Limits {
 		MaxMessageBytes:  8 << 10,
 		MaxHostCallBytes: 64 << 20,
 		MaxHostCalls:     100_000,
+		MaxHTTPRequests:  256,
+		MaxKVValueBytes:  1 << 20,
+		MaxInvokes:       64,
+		MaxInvokeDepth:   8,
 	}
 }
 
@@ -93,6 +108,25 @@ type Invocation struct {
 	OnLog      func(level Level, tool, msg string)
 	OnProgress func(done, total int64, msg string)
 
+	// Services are what the capability-backed host functions call through.
+	// A nil service is a capability forge cannot provide in this process --
+	// distinct from one the tool was not granted, and reported differently, so
+	// "not configured" never reads as "you were refused".
+	Services Services
+
+	results *results
+
+	// CallPath is the chain of tools that led here, used to refuse a cycle.
+	// It is the caller's path plus the caller itself.
+	CallPath []string
+
+	// Budget is shared by every invocation in one call tree. Prepare creates
+	// one when it is nil, so a call that starts at a surface gets a fresh
+	// allowance and a nested call keeps the one it inherited.
+	Budget *Budget
+
+	// calls and bytes are per-invocation: they bound what one guest can push
+	// across the ABI, which is a property of that guest and not of the tree.
 	calls     atomic.Int64
 	bytes     atomic.Int64
 	callRead  atomic.Bool
@@ -119,6 +153,38 @@ func (inv *Invocation) charge(n int64) bool {
 	return true
 }
 
+// Services are the host-side implementations behind the capability host
+// functions. Each is nil unless the surface wiring provides it.
+type Services struct {
+	HTTP    HTTPService
+	KV      KVStore
+	Secrets SecretSource
+	Invoker ToolInvoker
+}
+
+// Prepare readies an invocation for use. Call it before With.
+func (inv *Invocation) Prepare() {
+	if inv.results == nil {
+		inv.results = newResults()
+	}
+	// Fill each unset limit individually rather than only replacing a wholly
+	// zero Limits. A caller that sets one field and leaves the rest at zero
+	// would otherwise get no limit at all on everything it did not mention,
+	// which is the wrong way round for a sandbox to fail.
+	inv.Limits = inv.Limits.withDefaults()
+	if inv.Budget == nil {
+		inv.Budget = NewBudget()
+	}
+}
+
+// Release drops anything the invocation was holding. Call it when the call
+// ends, so a guest that abandoned a fetch cannot leave the payload behind.
+func (inv *Invocation) Release() {
+	if inv.results != nil {
+		inv.results.release()
+	}
+}
+
 type invocationKey struct{}
 
 // With attaches an invocation to a context for the duration of one guest call.
@@ -142,7 +208,13 @@ func From(ctx context.Context) *Invocation {
 // before any guest code runs, and impossible for the tool to explain or work
 // around. Denial belongs at the call, where it can be a value the guest can
 // read.
+// hostModule carries nothing yet; it exists so that the per-call plumbing in
+// result.go has somewhere to hang, and so that adding host-wide state later
+// does not mean changing every signature.
+type hostModule struct{}
+
 func Instantiate(ctx context.Context, rt wazero.Runtime) error {
+	m := &hostModule{}
 	b := rt.NewHostModuleBuilder(ModuleName)
 
 	b.NewFunctionBuilder().
@@ -170,6 +242,34 @@ func Instantiate(ctx context.Context, rt wazero.Runtime) error {
 			[]api.ValueType{api.ValueTypeI64, api.ValueTypeI64, api.ValueTypeI32, api.ValueTypeI32}, nil).
 		WithParameterNames("done", "total", "ptr", "len").
 		Export("progress")
+
+	b.NewFunctionBuilder().
+		WithGoModuleFunction(api.GoModuleFunc(resultFetch),
+			[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
+			[]api.ValueType{api.ValueTypeI32}).
+		WithParameterNames("handle", "ptr", "cap").
+		WithResultNames("n").
+		Export("result_fetch")
+
+	// The capability-backed calls. Every one is registered whether or not the
+	// current invocation holds the capability: omitting one would turn a
+	// policy decision into a link error at instantiation, before any guest
+	// code runs, indistinguishable from an ABI mismatch and impossible for the
+	// tool to explain. Denial belongs at the call, where it is a value.
+	for name, svc := range map[string]service{
+		"http":   m.httpCall,
+		"kv":     m.kvCall,
+		"secret": m.secretCall,
+		"invoke": m.invokeCall,
+	} {
+		b.NewFunctionBuilder().
+			WithGoModuleFunction(m.serve(svc),
+				[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32},
+				[]api.ValueType{api.ValueTypeI64}).
+			WithParameterNames("req_ptr", "req_len").
+			WithResultNames("handle_len").
+			Export(name)
+	}
 
 	if _, err := b.Instantiate(ctx); err != nil {
 		return fmt.Errorf("registering the %q host module: %w", ModuleName, err)
@@ -274,3 +374,30 @@ func readGuest(inv *Invocation, mod api.Module, ptr uint32, length int32) ([]byt
 // module died rather than what actually went wrong. Recovering here loses the
 // host call, which is the lesser harm.
 func guard() { _ = recover() }
+
+// withDefaults fills any limit left at zero from DefaultLimits.
+func (l Limits) withDefaults() Limits {
+	d := DefaultLimits()
+	if l.MaxMessageBytes == 0 {
+		l.MaxMessageBytes = d.MaxMessageBytes
+	}
+	if l.MaxHostCallBytes == 0 {
+		l.MaxHostCallBytes = d.MaxHostCallBytes
+	}
+	if l.MaxHostCalls == 0 {
+		l.MaxHostCalls = d.MaxHostCalls
+	}
+	if l.MaxHTTPRequests == 0 {
+		l.MaxHTTPRequests = d.MaxHTTPRequests
+	}
+	if l.MaxKVValueBytes == 0 {
+		l.MaxKVValueBytes = d.MaxKVValueBytes
+	}
+	if l.MaxInvokes == 0 {
+		l.MaxInvokes = d.MaxInvokes
+	}
+	if l.MaxInvokeDepth == 0 {
+		l.MaxInvokeDepth = d.MaxInvokeDepth
+	}
+	return l
+}

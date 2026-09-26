@@ -19,3 +19,8 @@ package tool
 
 func hostLog(level int32, msg string)            {}
 func hostProgress(done, total int64, msg string) {}
+
+// hostCall off wasm always reports that the host is unreachable. A handler
+// under `go test` gets an ordinary error rather than a panic or a nil result
+// it might mistake for an empty success.
+func hostCall(svc service, req []byte) ([]byte, error) { return nil, errHostCall }

@@ -36,11 +36,16 @@ func (e *Engine) Describe(ctx context.Context, c *Compiled) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, describeTimeout)
 	defer cancel()
 
+	// Describing runs guest code, so it gets the same treatment as an
+	// invocation: no grants and no services at all. A tool cannot reach the
+	// network while forge is still working out what it is.
 	inv := &hostabi.Invocation{
 		Tool:   "(describing)",
 		Grants: capability.Set{},
 		Limits: hostabi.DefaultLimits(),
 	}
+	inv.Prepare()
+	defer inv.Release()
 	ctx = hostabi.With(ctx, inv)
 
 	stdout := NewCappedBuffer(describeMaxOutput)
@@ -156,7 +161,12 @@ func (e *Engine) Invoke(ctx context.Context, c *Compiled, req Request) (Response
 		Limits:     req.Opts.Limits,
 		OnLog:      req.Opts.OnLog,
 		OnProgress: req.Opts.OnProgress,
+		Services:   req.Opts.Services,
+		CallPath:   req.Opts.CallPath,
+		Budget:     req.Opts.Budget,
 	}
+	inv.Prepare()
+	defer inv.Release()
 	ctx = hostabi.With(ctx, inv)
 
 	stdout, stderr := NewCappedBuffer(defaultOutputCap), NewCappedBuffer(defaultOutputCap)

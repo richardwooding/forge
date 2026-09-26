@@ -18,6 +18,7 @@ import (
 
 	"github.com/richardwooding/forge/internal/binding"
 	"github.com/richardwooding/forge/internal/build"
+	"github.com/richardwooding/forge/internal/capability"
 	"github.com/richardwooding/forge/internal/core"
 	"github.com/richardwooding/forge/internal/labels"
 	"github.com/richardwooding/forge/internal/manifest"
@@ -47,6 +48,12 @@ type Config struct {
 	// forge non-interactively must not silently grant what it would otherwise
 	// have asked about.
 	Prompter policy.Prompter
+
+	// AllowPrivateNetwork lets tools reach loopback and private addresses.
+	// Off by default: the whole point of the SSRF screening is that a tool
+	// granted "example.com" cannot be talked into fetching 169.254.169.254.
+	// Tests that stand up a local server turn it on deliberately.
+	AllowPrivateNetwork bool
 }
 
 // Toolkit installs, lists and runs tools.
@@ -58,6 +65,11 @@ type Toolkit struct {
 	views   *view.Store
 	policy  *policy.Policy
 	floor   policy.Floor
+
+	// services back the capability host functions. Built once, shared by every
+	// invocation, because the rate limiter and the KV lock are only useful if
+	// every call goes through the same one.
+	services hostabi.Services
 
 	mu    sync.RWMutex
 	bound map[string]map[string]*binding.Bound // tool -> op -> bound
@@ -105,7 +117,7 @@ func New(ctx context.Context, cfg Config) (*Toolkit, error) {
 		return nil, err
 	}
 
-	return &Toolkit{
+	tk := &Toolkit{
 		cfg:     cfg,
 		store:   st,
 		builder: b,
@@ -116,7 +128,11 @@ func New(ctx context.Context, cfg Config) (*Toolkit, error) {
 		// them could grant itself anything on the next run.
 		floor: policy.DefaultFloor(cfg.Paths.Data, cfg.Paths.Config, cfg.Paths.Cache),
 		bound: map[string]map[string]*binding.Bound{},
-	}, nil
+	}
+	// The invoker closes the loop: it is one of tk's services and it calls
+	// back into tk, so it can only be built once tk exists.
+	tk.services = buildServices(cfg, invoker{tk: tk})
+	return tk, nil
 }
 
 // prompterKey carries a per-invocation Prompter.
@@ -364,6 +380,18 @@ type Call struct {
 
 	OnLog      func(level hostabi.Level, tool, msg string)
 	OnProgress func(done, total int64, msg string)
+
+	// attenuate, when set, caps the callee's grants at the caller's. It is set
+	// only by the tool-to-tool invoker; a call arriving from a surface has no
+	// caller to be attenuated against.
+	attenuate *capability.Set
+
+	// callPath is the chain of tools that led here.
+	callPath []string
+
+	// budget is the allowance of the call tree this call belongs to. Nil for
+	// a call from a surface, which starts a tree of its own.
+	budget *hostabi.Budget
 }
 
 // Result is what a call produced.
@@ -425,6 +453,9 @@ func (tk *Toolkit) Invoke(ctx context.Context, c Call) (*Result, error) {
 		Floor:    tk.floor,
 		Prompter: tk.prompterFor(ctx),
 	}).Resolve(ctx, rec.Spec.Name, rec.Spec.Summary, rec.Spec.Requires)
+	if err == nil && c.attenuate != nil {
+		grants = capability.Intersect(*c.attenuate, grants)
+	}
 	if err != nil {
 		// A refusal is the user's decision, not a malfunction, so it is
 		// reported as an input-level fault rather than an internal one.
@@ -450,6 +481,9 @@ func (tk *Toolkit) Invoke(ctx context.Context, c Call) (*Result, error) {
 			Timeout:    tk.cfg.InvokeTimeout,
 			OnLog:      c.OnLog,
 			OnProgress: c.OnProgress,
+			Services:   tk.services,
+			CallPath:   c.callPath,
+			Budget:     c.budget,
 		},
 	})
 	if err != nil {

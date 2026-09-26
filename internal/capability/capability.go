@@ -12,6 +12,7 @@
 package capability
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"slices"
@@ -145,6 +146,11 @@ const (
 	DenyNoGrant    DenyCode = "no_grant"     // no grant of this kind at all
 	DenyOutOfScope DenyCode = "out_of_scope" // granted, but not for this subject
 	DenyBudget     DenyCode = "budget"       // allowed, but the quota is spent
+	// DenyFloor is a refusal no grant can lift: forge does not permit this at
+	// all. It is kept apart from DenyOutOfScope because the advice differs --
+	// one is fixed by widening a grant and the other never is, and telling
+	// someone to change a setting that cannot help is worse than saying no.
+	DenyFloor DenyCode = "floor"
 )
 
 // Decision is the result of a capability check.
@@ -159,6 +165,36 @@ func (d Decision) Error() string {
 		return ""
 	}
 	return d.Detail
+}
+
+// Denial is an error carrying a refusal, so a service can report one without
+// the caller having to match on message text.
+type Denial struct{ Decision }
+
+func (d *Denial) Error() string { return d.Detail }
+
+// Refuse wraps a decision as an error.
+func Refuse(d Decision) error { return &Denial{Decision: d} }
+
+// Refusef builds a refusal directly.
+func Refusef(code DenyCode, format string, args ...any) error {
+	return &Denial{Decision: deny(code, format, args...)}
+}
+
+// AsDenial reports whether err is a refusal, and returns the decision behind
+// it.
+//
+// A refusal is the user's decision rather than a malfunction, and every
+// surface renders the two differently; matching on the type keeps that
+// distinction from depending on how a message happens to be worded. The whole
+// Decision comes back rather than its text, because the code is what tells a
+// missing grant apart from an exhausted budget -- and those need different
+// things done about them.
+func AsDenial(err error) (Decision, bool) {
+	if d, ok := errors.AsType[*Denial](err); ok {
+		return d.Decision, true
+	}
+	return Decision{}, false
 }
 
 func allow() Decision { return Decision{OK: true} }
