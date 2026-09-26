@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -30,6 +31,16 @@ func NewDispatcher(opts Options) *Dispatcher { return &Dispatcher{opts: opts} }
 // callable on the next line -- which is the same property the MCP surface has
 // and would be odd to lack here.
 func (d *Dispatcher) Dispatch(ctx context.Context, args []string) (stdout, stderr string, err error) {
+	return d.DispatchInput(ctx, args, nil)
+}
+
+// DispatchInput is Dispatch with something on standard input.
+//
+// It exists for callers that hand a tool a whole document rather than flags --
+// `forge run <tool> --input-json -` -- which is the same path a shell pipeline
+// takes, and the one the conformance harness uses so that the CLI is compared
+// on the shared code rather than on its own flag encoder.
+func (d *Dispatcher) DispatchInput(ctx context.Context, args []string, stdin []byte) (stdout, stderr string, err error) {
 	var out, errBuf bytes.Buffer
 
 	root, err := New(Options{
@@ -41,6 +52,10 @@ func (d *Dispatcher) Dispatch(ctx context.Context, args []string) (stdout, stder
 	})
 	if err != nil {
 		return "", "", err
+	}
+	if stdin != nil {
+		root.SetIn(bytes.NewReader(stdin))
+		args = append(append([]string(nil), args...), "--input-json", "-")
 	}
 	root.SetArgs(args)
 	root.SetOut(&out)
@@ -54,17 +69,32 @@ func (d *Dispatcher) Dispatch(ctx context.Context, args []string) (stdout, stder
 	return out.String(), errBuf.String(), renderError(runErr)
 }
 
+// ErrToolFailed reports that the tool ran and reported failure, as opposed to
+// forge being unable to run it.
+//
+// The distinction has to survive this far. A caller that cannot tell the two
+// apart -- the REPL deciding how to render a line, a harness deciding whether
+// the surfaces agree -- would treat a tool saying no as a success, which is
+// the one row of the parity table that is easiest to get wrong because it
+// looks like an error and is not one.
+var ErrToolFailed = errors.New("the tool reported a failure")
+
 // renderError turns a command error into the one line the shell should show,
 // through the same fault rendering the CLI uses.
 func renderError(err error) error {
 	if err == nil {
 		return nil
 	}
+	if errors.Is(err, errToolFailed) {
+		// The tool has already written its own message to stderr; what is
+		// added here is the classification, not the words.
+		return ErrToolFailed
+	}
 	var b bytes.Buffer
 	Render(&b, err)
 	msg := strings.TrimRight(b.String(), "\n")
 	if msg == "" {
-		return nil // a tool that failed has already printed its own message
+		return nil
 	}
 	return errorString(msg)
 }

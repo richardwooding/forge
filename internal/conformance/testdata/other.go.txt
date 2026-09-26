@@ -1,0 +1,21 @@
+// Command other exists only so that a view has something to exclude.
+package main
+
+import "github.com/richardwooding/forge/sdk/tool"
+
+type Args struct {
+	N int `json:"n"`
+}
+
+type Out struct {
+	N int `json:"n"`
+}
+
+var _ = tool.Register(
+	tool.Spec{Name: "other", Summary: "Not in the conformance view", Labels: []string{"excluded"}},
+	tool.Op("run", run, tool.ReadOnly()),
+)
+
+func main() {}
+
+func run(ctx *tool.Context, a Args) (Out, error) { return Out{N: a.N}, nil }

@@ -1,0 +1,114 @@
+// Command corpus is the conformance suite's tool under test.
+//
+// Deliberately awkward. Each operation exists because it is a shape a surface
+// could plausibly get wrong on its own: nested objects, arrays whose values
+// contain commas, integers past the float64 boundary, text that is not ASCII,
+// binary that is not text at all, and a handler that fails.
+package main
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/richardwooding/forge/sdk/tool"
+)
+
+type EchoArgs struct {
+	Text string `json:"text" jsonschema:"text to echo back"`
+}
+
+type NestArgs struct {
+	Outer struct {
+		Inner struct {
+			Value string `json:"value"`
+		} `json:"inner"`
+	} `json:"outer"`
+	Count int `json:"count,omitempty"`
+}
+
+type NestOut struct {
+	Value string `json:"value"`
+	Count int    `json:"count"`
+}
+
+type TagArgs struct {
+	Tags []string `json:"tags,omitempty" jsonschema:"tags, which may contain commas"`
+}
+
+type TagOut struct {
+	Joined string `json:"joined"`
+	N      int    `json:"n"`
+}
+
+type BigArgs struct {
+	N int64 `json:"n" jsonschema:"an integer that must survive exactly"`
+}
+
+type BigOut struct {
+	N int64 `json:"n"`
+}
+
+type ModeArgs struct {
+	Mode string `json:"mode" jsonschema:"one of fast or slow"`
+}
+
+var _ = tool.Register(
+	tool.Spec{
+		Name:    "corpus",
+		Version: "1.0.0",
+		Summary: "Shapes that surfaces get wrong",
+		Labels:  []string{"conformance", "demo"},
+	},
+	tool.Op("echo", echo, tool.Text(), tool.ReadOnly(),
+		tool.Summary("Return the text unchanged")),
+	tool.Op("nest", nest, tool.ReadOnly(),
+		tool.Summary("Read a value from three levels down")),
+	tool.Op("tags", tags, tool.ReadOnly(),
+		tool.Summary("Join a list whose values contain commas")),
+	tool.Op("big", big, tool.ReadOnly(),
+		tool.Summary("Round-trip an integer past 2^53")),
+	tool.Op("mode", mode, tool.Text(), tool.ReadOnly(),
+		tool.Summary("Accept only one of two values")),
+	tool.Op("blob", blob, tool.Bytes("application/octet-stream"),
+		tool.Summary("Return bytes that are not text")),
+	tool.Op("fail", fail, tool.Text(),
+		tool.Summary("Always fail, with a message worth keeping")),
+	tool.Op("panics", panics, tool.Text(),
+		tool.Summary("Always panic")),
+)
+
+func main() {}
+
+func echo(ctx *tool.Context, a EchoArgs) (string, error) { return a.Text, nil }
+
+func nest(ctx *tool.Context, a NestArgs) (NestOut, error) {
+	return NestOut{Value: a.Outer.Inner.Value, Count: a.Count}, nil
+}
+
+func tags(ctx *tool.Context, a TagArgs) (TagOut, error) {
+	return TagOut{Joined: strings.Join(a.Tags, "|"), N: len(a.Tags)}, nil
+}
+
+func big(ctx *tool.Context, a BigArgs) (BigOut, error) { return BigOut{N: a.N}, nil }
+
+func mode(ctx *tool.Context, a ModeArgs) (string, error) {
+	if a.Mode != "fast" && a.Mode != "slow" {
+		return "", fmt.Errorf("mode %q is neither fast nor slow", a.Mode)
+	}
+	return "mode:" + a.Mode, nil
+}
+
+func blob(ctx *tool.Context, a EchoArgs) ([]byte, error) {
+	// A zero byte and a byte that is not valid UTF-8, so a surface that treats
+	// binary as text is caught rather than flattered.
+	return []byte{0x00, 0xff, 0x10, 'o', 'k'}, nil
+}
+
+func fail(ctx *tool.Context, a EchoArgs) (string, error) {
+	return "", errors.New("corpus: deliberate failure: " + a.Text)
+}
+
+func panics(ctx *tool.Context, a EchoArgs) (string, error) {
+	panic("corpus: deliberate panic: " + a.Text)
+}

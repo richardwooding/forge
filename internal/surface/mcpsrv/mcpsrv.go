@@ -300,11 +300,13 @@ func renderResult(tool, op string, res *toolkit.Result) *mcp.CallToolResult {
 		}
 
 	default:
-		var v any
-		if len(r.JSON) > 0 {
-			if err := json.Unmarshal(r.JSON, &v); err == nil {
-				out.StructuredContent = v
-			}
+		if len(r.JSON) > 0 && json.Valid(r.JSON) {
+			// The raw bytes, not a decoded value. Unmarshalling into an `any`
+			// turns every number into a float64, which silently rounded
+			// anything past 2^53 on its way back out -- the call succeeded and
+			// the number was wrong. json.RawMessage marshals verbatim, so the
+			// digits the tool produced are the digits the client receives.
+			out.StructuredContent = r.JSON
 		}
 		// A text copy as well, because clients that ignore structuredContent
 		// would otherwise show the call as having returned nothing.

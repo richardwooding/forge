@@ -100,6 +100,29 @@ Needs: []tool.Need{{
 forge asks you before granting any of it, shows every request in one prompt —
 the combination is what carries the risk — and remembers your answer.
 
+## The surfaces agree, and that is checked
+
+Four surfaces exposing the same tools is only useful if they behave the same
+way. `internal/conformance` drives all of them — a cobra tree, an MCP client
+over the SDK's own plumbing, an httptest server, a bufconn dialler — through
+one adversarial corpus and asserts:
+
+- each exposes the same tools;
+- each advertises a **byte-identical** input schema;
+- each produces the same outcome for the same input, failures included;
+- a tool's own error message survives everywhere;
+- a view hides the same tools everywhere;
+- an integer past 2^53 survives exactly, end to end.
+
+The failure clause matters as much as the success one, and the schema clause
+catches the nastiest drift of all: every surface working, and the four
+disagreeing about what the tool accepts.
+
+Writing it found two real bugs immediately. The MCP surface decoded results
+into an `any` before sending them, which silently rounded every integer past
+2^53; and the REPL's dispatcher swallowed the difference between a tool that
+failed and one that succeeded.
+
 ## Security
 
 `forge tool add` compiles Go source on your machine with the ordinary toolchain.
