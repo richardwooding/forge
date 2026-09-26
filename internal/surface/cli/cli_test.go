@@ -320,4 +320,18 @@ func containsString(hay []string, needle string) bool {
 	return slices.Contains(hay, needle)
 }
 
+// installSecond adds a second tool to an existing toolkit, for tests about
+// what a long-lived surface notices.
+func installSecond(t *testing.T, tk *toolkit.Toolkit) {
+	t.Helper()
+	src := strings.ReplaceAll(toolSource, `"hello"`, `"second"`)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tk.Add(context.Background(), dir); err != nil {
+		t.Fatalf("installing the second tool: %v", err)
+	}
+}
+
 var _ = store.Record{}
