@@ -122,6 +122,30 @@ Needs: []tool.Need{{
 forge asks you before granting any of it, shows every request in one prompt —
 the combination is what carries the risk — and remembers your answer.
 
+### Four to read
+
+`tools/` holds four working tools, chosen to cover the interesting cases rather
+than to be a library. Install any of them with `forge tool add ./tools/<name>`.
+
+| | Declares | Shows |
+|---|---|---|
+| `jsonfmt` | nothing | A pure function. It never prompts and can reach nothing, which is the shape to aim for. |
+| `fetch` | `net.http` | One capability, and what a refusal looks like from inside a tool. |
+| `since` | `kv`, `clock.wall` | State that outlives an invocation. Ask it which of these items you have not seen. |
+| `watch` | `net.http`, `tool.invoke`, `kv`, `clock.wall` | One tool calling another: it fetches, then delegates its memory to `since`. |
+
+`watch` is the one worth reading if you plan to compose tools. A callee runs
+with the intersection of its own grants and its caller's, so `watch` has to
+hold everything `since` needs — including `kv(since)`, which gives it no access
+to what `since` stored, since a namespace belongs to the tool that opens it.
+
+It also has to hold `clock.wall`, and that one is a trap. A missing grant
+usually fails loudly; an ungranted clock does not. forge hands the tool a clock
+frozen at the start of 2022 and everything carries on working. The first
+version of `watch` did not ask for it, so `since` ran perfectly and stamped
+every record it wrote with `2022-01-01`. Nothing failed. It was only found by
+reading the output.
+
 ## Moving tools between machines
 
 ```console
