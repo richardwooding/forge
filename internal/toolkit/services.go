@@ -89,7 +89,16 @@ func (in invoker) Invoke(ctx context.Context, caller string, callerGrants capabi
 		return nil, err
 	}
 	if res.Rendition.ToolError {
-		return nil, fmt.Errorf("%s reported a failure", tool)
+		// Carry the callee's own message across. Reporting only that it
+		// "failed" leaves the calling tool with nothing to tell its user, and
+		// the caller cannot go and look: it has no way to run the callee
+		// again, and the reason has already been discarded by the time it
+		// notices. A capability the callee was denied is the commonest cause,
+		// and the denial text names exactly which one.
+		if msg := res.Rendition.Message; msg != "" {
+			return nil, fmt.Errorf("%s: %s", tool, msg)
+		}
+		return nil, fmt.Errorf("%s reported a failure, without saying why", tool)
 	}
 	return res.Rendition.JSON, nil
 }

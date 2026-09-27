@@ -81,7 +81,11 @@ func run(ctx *tool.Context, a Args) (Out, error) {
 // check that a callee cannot use a capability its caller lacks.
 const echoerSource = `package main
 
-import "github.com/richardwooding/forge/sdk/tool"
+import (
+	"fmt"
+
+	"github.com/richardwooding/forge/sdk/tool"
+)
 
 type Args struct {
 	Word string ` + "`json:\"word\"`" + `
@@ -103,6 +107,9 @@ var _ = tool.Register(tool.Spec{
 func main() {}
 
 func run(ctx *tool.Context, a Args) (Out, error) {
+	if a.Word == "boom" {
+		return Out{}, fmt.Errorf("echoer will not say that")
+	}
 	out := Out{Echo: a.Word + "!"}
 	// Whether this succeeds is the attenuation test: echoer was granted
 	// secret(private) directly, but a caller without it must not gain it.
@@ -303,5 +310,27 @@ func TestInvokeIsScopedToNamedCallees(t *testing.T) {
 	}
 	if got.Code != string(capability.DenyOutOfScope) {
 		t.Errorf("got code %q, want %q", got.Code, capability.DenyOutOfScope)
+	}
+}
+
+// TestACalleesFailureSaysWhy: a tool-to-tool call that fails must carry the
+// callee's own message back.
+//
+// It did not. The invoker reported "<tool> reported a failure" and discarded
+// the reason, which leaves the calling tool with nothing to tell its user and
+// no way to find out -- it cannot run the callee again, and by the time it
+// notices, the message is gone. The commonest cause is a capability the callee
+// was denied, and that denial names exactly which one.
+func TestACalleesFailureSaysWhy(t *testing.T) {
+	tk := invokeFixture(t)
+	grant(t, tk, "caller")
+	grant(t, tk, "echoer")
+
+	got := runCaller(t, tk, "echoer", "boom")
+	if got.Denied {
+		t.Fatalf("the call was denied rather than failing: %s", got.Result)
+	}
+	if !strings.Contains(got.Result, "echoer will not say that") {
+		t.Errorf("the callee's reason did not reach the caller: %q", got.Result)
 	}
 }
