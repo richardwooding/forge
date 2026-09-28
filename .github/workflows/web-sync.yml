@@ -1,11 +1,32 @@
-# Weekly check that the committed GUI bundle still matches a fresh build of
-# web/src, opening a PR when it drifts. Dependency bumps arrive via dependabot
-# on web/package.json; this keeps the built artifact honest.
+# Keeps the committed GUI bundle in web/dist honest.
+#
+# Two jobs:
+#   regenerate — on any PR touching web/, rebuild the bundle and push the result
+#     back onto the PR branch. Dependabot edits web/package.json but cannot run
+#     `make web`, so without this every npm PR fails ordinary CI's web/dist
+#     diff-check by construction, and fixing the branches by hand does not hold:
+#     dependabot force-pushes when it rebases and the rebuild is discarded.
+#   weekly — catch drift on the default branch and open a PR.
 #
 # This is the only place node runs. Ordinary CI diff-checks web/dist without
 # installing anything, so a contributor never needs npm to build or test forge.
+#
+# Both need WEB_SYNC_TOKEN: a PAT or GitHub App token with Contents and
+# Pull requests read/write.
+#   gh secret set WEB_SYNC_TOKEN --repo {owner}/{repo} --body "$PAT"
+# GitHub does not trigger workflows from pushes or PRs made with the built-in
+# GITHUB_TOKEN, and it forces GITHUB_TOKEN to read-only on dependabot-triggered
+# events. With the built-in token the push back to a dependabot branch is
+# rejected outright, and a weekly drift PR would open with zero checks.
+# Without the secret this falls back to github.token and keeps today's
+# behaviour rather than failing the run.
 name: web-sync
 on:
+  pull_request:
+    paths:
+      - "web/package.json"
+      - "web/package-lock.json"
+      - "web/src/**"
   schedule:
     - cron: "0 6 * * 1"
   workflow_dispatch:
@@ -13,10 +34,43 @@ permissions:
   contents: write
   pull-requests: write
 jobs:
-  sync:
+  regenerate:
+    # Same-repo branches only — a fork PR cannot be pushed back to.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.WEB_SYNC_TOKEN || github.token }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: make web
+      - name: Commit the rebuilt bundle back onto the PR branch
+        run: |
+          if git diff --quiet -- web/dist; then
+            echo "web/dist already matches web/src."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add web/dist
+          git commit -m "chore: rebuild the GUI bundle"
+          # Re-runs this workflow; the rebuild is then a no-op, so it settles.
+          git push origin "HEAD:${GITHUB_HEAD_REF}"
+
+  weekly:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.WEB_SYNC_TOKEN || github.token }}
       - uses: actions/setup-node@v5
         with:
           node-version: "22"
@@ -24,17 +78,25 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: make web
       - name: Open a PR if the bundle changed
-        run: |
-          if ! git diff --quiet -- web/dist; then
-            git config user.name  "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            branch="web-sync-$(date +%Y%m%d)"
-            git checkout -b "$branch"
-            git add web/dist
-            git commit -m "chore: rebuild the GUI bundle"
-            git push -u origin "$branch"
-            gh pr create --fill --title "chore: rebuild the GUI bundle" \
-              --body "Automated rebuild of web/dist from web/src."
-          fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.WEB_SYNC_TOKEN || github.token }}
+        run: |
+          if git diff --quiet -- web/dist; then
+            echo "no drift."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          branch="web-sync-$(date +%Y%m%d)"
+          git switch -C "$branch"
+          git add web/dist
+          git commit -m "chore: rebuild the GUI bundle"
+          git push -f -u origin "$branch"
+          STATE="$(gh pr view "$branch" --json state --jq .state 2>/dev/null || true)"
+          if [ "$STATE" = "OPEN" ]; then
+            echo "PR already open; updated the branch."
+          else
+            gh pr create --base "${GITHUB_REF_NAME}" --head "$branch" \
+              --title "chore: rebuild the GUI bundle" \
+              --body "Automated rebuild of \`web/dist\` from \`web/src\`."
+          fi
