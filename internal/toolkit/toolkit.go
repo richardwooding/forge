@@ -202,6 +202,7 @@ type AddOption func(*addOptions)
 
 type addOptions struct {
 	approve func(ctx context.Context, loaded *manifest.Loaded) error
+	source  string
 }
 
 // WithApprove asks approve once the module has described itself but before
@@ -215,6 +216,19 @@ type addOptions struct {
 // in the loop before anything is committed.
 func WithApprove(approve func(ctx context.Context, loaded *manifest.Loaded) error) AddOption {
 	return func(o *addOptions) { o.approve = approve }
+}
+
+// WithSource records label as where the tool came from, in place of the path
+// Add was given.
+//
+// A surface that writes the source to a temporary file of its own -- MCP's
+// install does, from a string a model sent -- must pass this. That path is
+// deleted the moment the install returns, so recording it would leave
+// `forge info` pointing at something that cannot exist and cannot be rebuilt.
+// A short label is the honest answer, and it is what import has always
+// written.
+func WithSource(label string) AddOption {
+	return func(o *addOptions) { o.source = label }
 }
 
 // Add builds a tool from source and installs it.
@@ -273,11 +287,15 @@ func (tk *Toolkit) Add(ctx context.Context, src string, opts ...AddOption) (*Add
 	if err != nil {
 		return nil, err
 	}
+	source := src
+	if o.source != "" {
+		source = o.source
+	}
 	rec := store.Record{
 		Spec:       loaded.Spec,
 		WasmDigest: digest,
 		Build:      art.Prov,
-		Source:     src,
+		Source:     source,
 	}
 	if replaced {
 		// Reinstalling keeps the labels the user added; discarding them would

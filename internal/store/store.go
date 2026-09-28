@@ -44,9 +44,16 @@ type Record struct {
 	// the tool's own so that reinstalling it does not discard them.
 	ExtraLabels []string `json:"extraLabels,omitempty"`
 
-	Build  build.Provenance `json:"build,omitzero"`
-	Source string           `json:"source,omitempty"`
-	Added  time.Time        `json:"added"`
+	Build build.Provenance `json:"build,omitzero"`
+
+	// Source says where the tool came from, for a person reading `forge info`.
+	// It is a path only when that path is one the user chose and can go back
+	// to; a surface that compiles from a temporary file of its own making
+	// writes a label instead ("imported", "installed over MCP"), because a
+	// path that forge deleted on the way out is worse than no answer.
+	Source string `json:"source,omitempty"`
+
+	Added time.Time `json:"added"`
 }
 
 // Labels is the tool's own labels plus the user's, deduplicated and sorted.

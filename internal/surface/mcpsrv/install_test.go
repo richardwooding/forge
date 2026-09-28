@@ -172,6 +172,48 @@ func TestInstallToolAsksApprovalAndInstalls(t *testing.T) {
 	}
 }
 
+// TestInstalledSourceIsNotAVanishedPath is the fix for a source line nobody
+// could act on. forge_add_tool stages the source a model sent into a temp file
+// and deletes it as it returns, so recording that path left `forge info`
+// naming a file guaranteed not to exist -- and, worse, made removal look
+// irreversible when the real source was still in the conversation. Assert the
+// record says where the tool came from in words, and never points at a path
+// that is gone.
+func TestInstalledSourceIsNotAVanishedPath(t *testing.T) {
+	tk := freshToolkit(t)
+	mgr := mcpsrv.New(mcpsrv.Options{Toolkit: tk, AllowInstall: true})
+	srv, err := mgr.Server("", labels.All)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := connectWithElicitation(t, srv, approve(true))
+
+	res, err := sess.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "forge_add_tool",
+		Arguments: map[string]any{"source": pingSrc},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("install reported an error: %+v", res.Content)
+	}
+
+	rec, err := tk.Get("ping")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.IsAbs(rec.Source) || strings.HasSuffix(rec.Source, ".go") {
+		t.Errorf("source = %q, which reads as a path; an MCP install has none to give", rec.Source)
+	}
+	if _, err := os.Stat(rec.Source); err == nil {
+		t.Errorf("source = %q, which happens to exist on disk; it is meant to be a label", rec.Source)
+	}
+	if rec.Source == "" {
+		t.Error("source is empty; `forge info` should still say where the tool came from")
+	}
+}
+
 // TestInstallDeclinedInstallsNothing is the gate doing its job: a human saying
 // no must leave no trace, the same guarantee Add already gives a module that
 // describes itself badly.

@@ -26,6 +26,13 @@ const approveRequestID = "approve"
 // own; beginInstall reads the manifest through the closure that returns it.
 var errStopAfterDescribe = errors.New("forge: stopping before install to ask for approval")
 
+// sourceLabel is what `forge info` shows as a tool's source when it arrived
+// this way. The path Toolkit.Add was actually given is a temp file staged from
+// a string a model sent, and it is deleted the moment the install returns, so
+// recording it would name a file that is already gone and was never the user's
+// to begin with. Import writes "imported" for the same reason.
+const sourceLabel = "installed over MCP"
+
 // addInstallTool gives an agent a way to compile and install a tool without
 // leaving MCP.
 //
@@ -147,7 +154,7 @@ func (m *Manager) finishInstall(ctx context.Context, path string, resp mcp.Input
 		return errorResult("forge_add_tool: install declined, nothing was written to the store"), nil
 	}
 
-	res, err := m.opts.Toolkit.Add(ctx, path)
+	res, err := m.opts.Toolkit.Add(ctx, path, toolkit.WithSource(sourceLabel))
 	if err != nil {
 		return errorResult(err.Error()), nil //nolint:nilerr // MCP carries tool errors as results
 	}
