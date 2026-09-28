@@ -310,15 +310,12 @@ func (r *Resolver) Resolve(ctx context.Context, tool, summary string, requests [
 	held := r.Policy.Granted(tool)
 	var missing []Request
 	for _, req := range requests {
-		for _, scope := range req.Scope {
-			if held.Allow(req.Kind, scope).OK {
-				continue
-			}
-			missing = append(missing, Request{
-				Tool: tool, Kind: req.Kind, Scope: req.Scope, Reason: req.Reason,
-			})
-			break
+		if satisfied(held, req) {
+			continue
 		}
+		missing = append(missing, Request{
+			Tool: tool, Kind: req.Kind, Scope: req.Scope, Reason: req.Reason,
+		})
 	}
 	if len(missing) == 0 {
 		return held, nil
@@ -360,6 +357,44 @@ func (r *Resolver) Resolve(ctx context.Context, tool, summary string, requests [
 		}
 		return capability.Set{}, fmt.Errorf("%w: %s may not %s", ErrDenied, tool, describe(missing))
 	}
+}
+
+// satisfied reports whether the policy already answers a request, and so
+// whether there is anything left to ask about.
+//
+// A declared scope of "*" is a tool saying it may want anything of this kind,
+// not that it needs all of it: a tool cannot name your directories or guess
+// which hosts you care about, so it declares the open scope and asks, in its
+// reason, to be narrowed. Holding any grant of that kind is therefore an answer
+// already given. Treating "*" as a requirement instead made `forge grant allow
+// --scope` useless -- a narrowed grant could never satisfy the open request, so
+// every single call re-prompted, and on a surface with nobody to ask the tool
+// simply never ran.
+//
+// This decides only whether to ask. What the tool may actually reach is
+// enforced where it is used, always against the held scopes and never against
+// the declared ones: mountsFor builds the filesystem mounts from them, and each
+// host function checks the concrete host, key or namespace through Set.Allow.
+func satisfied(held capability.Set, req capability.Request) bool {
+	if openScope(req.Scope) {
+		return len(held.Scopes(req.Kind)) > 0
+	}
+	for _, scope := range req.Scope {
+		if !held.Allow(req.Kind, scope).OK {
+			return false
+		}
+	}
+	return true
+}
+
+// openScope reports whether a declared scope is the unrestricted "*".
+func openScope(scope []string) bool {
+	for _, s := range scope {
+		if s == "*" {
+			return true
+		}
+	}
+	return false
 }
 
 func grantsFor(requests []capability.Request) []capability.Grant {

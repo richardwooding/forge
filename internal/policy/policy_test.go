@@ -455,3 +455,85 @@ func TestAnUnreadableFileKeepsTheLastGoodState(t *testing.T) {
 		t.Error("a corrupt file discarded grants that were already known good")
 	}
 }
+
+// TestANarrowedGrantSatisfiesAnOpenRequest is what makes `forge grant allow
+// --scope` mean anything.
+//
+// A tool cannot name your directories, so it declares fs.read over "*" and asks
+// to be narrowed. Before this, the resolver compared the held grant against the
+// declared "*", never matched, and re-prompted on every single call -- so the
+// narrowed grant it had just been given was unusable, and on a surface with
+// nobody to ask the tool simply never ran.
+func TestANarrowedGrantSatisfiesAnOpenRequest(t *testing.T) {
+	p := open(t)
+	if err := p.Grant("hashsum", []capability.Grant{{
+		Kind: capability.FSRead, Scope: []string{"/home/you/Downloads"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	ask := &answering{answer: Deny}
+	r := &Resolver{Policy: p, Prompter: ask}
+	open := []capability.Request{{
+		Kind:   capability.FSRead,
+		Scope:  []string{"*"},
+		Reason: "read the files you ask it to hash",
+	}}
+
+	set, err := r.Resolve(context.Background(), "hashsum", "", open)
+	if err != nil {
+		t.Fatalf("a tool holding a narrowed grant was refused: %v", err)
+	}
+	if len(ask.asked) != 0 {
+		t.Errorf("asked again for a capability already decided: %+v", ask.asked)
+	}
+	if !set.Allow(capability.FSRead, "/home/you/Downloads").OK {
+		t.Error("the narrowed grant did not survive into the resolved set")
+	}
+	// The narrowing has to be real: deciding not to ask must not widen what the
+	// tool may reach. Enforcement is against the held scope, never the declared
+	// one, and this is the assertion that says so.
+	if set.Allow(capability.FSRead, "/etc").OK {
+		t.Error("an open request widened a narrowed grant to cover everything")
+	}
+}
+
+// TestAnOpenRequestWithNoGrantStillAsks is the other half: "*" is satisfied by
+// holding something of that kind, not by holding nothing.
+func TestAnOpenRequestWithNoGrantStillAsks(t *testing.T) {
+	p := open(t)
+	ask := &answering{answer: AllowAlways}
+	r := &Resolver{Policy: p, Prompter: ask}
+
+	if _, err := r.Resolve(context.Background(), "hashsum", "", []capability.Request{{
+		Kind: capability.FSRead, Scope: []string{"*"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(ask.asked) != 1 {
+		t.Errorf("asked %d times for a capability nothing had been granted for, want once", len(ask.asked))
+	}
+}
+
+// TestAConcreteRequestStillNeedsEveryScope guards the case the open-scope
+// shortcut must not swallow: a tool naming two hosts needs both, and holding
+// one is not an answer for the other.
+func TestAConcreteRequestStillNeedsEveryScope(t *testing.T) {
+	p := open(t)
+	if err := p.Grant("fetch", []capability.Grant{{
+		Kind: capability.NetHTTP, Scope: []string{"a.example.com"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	ask := &answering{answer: AllowAlways}
+	r := &Resolver{Policy: p, Prompter: ask}
+
+	if _, err := r.Resolve(context.Background(), "fetch", "", []capability.Request{{
+		Kind: capability.NetHTTP, Scope: []string{"a.example.com", "b.example.com"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(ask.asked) != 1 {
+		t.Errorf("asked %d times, want once: the second host was never granted", len(ask.asked))
+	}
+}

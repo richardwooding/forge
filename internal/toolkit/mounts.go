@@ -73,8 +73,11 @@ func mountPath(kind capability.Kind, scope string) (string, error) {
 		// Legal in a grant, and meaningless as a mount: it would be the whole
 		// filesystem, which forge does not hand to a tool however the grant
 		// was worded.
-		return "", fmt.Errorf("%s is granted for %q, which would be the entire filesystem; "+
-			"grant a directory instead (forge grant revoke, then name the path)", kind, scope)
+		// The remedy is named in full because the grant looks fine everywhere
+		// it is displayed -- `forge grant ls` shows it -- and only fails here.
+		return "", fmt.Errorf("%[1]s is granted for %[2]q, which would be the entire filesystem; "+
+			"name the directory you meant instead: forge grant revoke <tool>, "+
+			"then forge grant allow <tool> --scope %[1]s=/the/directory", kind, scope)
 	}
 	if !filepath.IsAbs(scope) {
 		return "", fmt.Errorf("%s is granted for %q, which is not an absolute path", kind, scope)

@@ -122,17 +122,34 @@ Needs: []tool.Need{{
 forge asks you before granting any of it, shows every request in one prompt —
 the combination is what carries the risk — and remembers your answer.
 
-### Four to read
+### Five to read
 
-`tools/` holds four working tools, chosen to cover the interesting cases rather
+`tools/` holds five working tools, chosen to cover the interesting cases rather
 than to be a library. Install any of them with `forge tool add ./tools/<name>`.
 
 | | Declares | Shows |
 |---|---|---|
 | `jsonfmt` | nothing | A pure function. It never prompts and can reach nothing, which is the shape to aim for. |
 | `fetch` | `net.http` | One capability, and what a refusal looks like from inside a tool. |
+| `hashsum` | `fs.read` | A file on disk, and a scope you have to narrow yourself. |
 | `since` | `kv`, `clock.wall` | State that outlives an invocation. Ask it which of these items you have not seen. |
 | `watch` | `net.http`, `tool.invoke`, `kv`, `clock.wall` | One tool calling another: it fetches, then delegates its memory to `since`. |
+
+`hashsum` is the one that shows why a filesystem grant works differently. A tool
+cannot name your directories in its own source, so it declares `fs.read` over
+`*` and says, in its reason, to narrow it:
+
+```console
+$ forge tool add ./tools/hashsum
+$ forge grant allow hashsum --scope fs.read=~/Downloads
+$ forge hashsum verify --path ~/Downloads/forge_0.11.0_linux_amd64.tar.gz \
+                       --checksums ~/Downloads/checksums.txt
+{"match":true,"algo":"sha256", ...}
+```
+
+An unnarrowed `*` is refused at the point of use rather than at the point of
+granting, because forge will not hand a tool the whole filesystem however the
+grant was worded.
 
 `watch` is the one worth reading if you plan to compose tools. A callee runs
 with the intersection of its own grants and its caller's, so `watch` has to
@@ -155,7 +172,34 @@ few lines for a `CLAUDE.md`.
 
 Whether any of it works is measurable rather than a matter of opinion:
 `scripts/adoption.py <transcript.jsonl>` counts tool calls against shell calls
-for a session.
+for a session. Run against a session held immediately after all of the above
+shipped, it said 63 shell calls and 0 tool calls — including a release verified
+with `sha256sum` by the same person who had written *never hand-roll a checksum
+comparison* into the instructions.
+
+The conclusion that survives that number is that instructions move **discovery**
+and not **initiation**: they help once you have decided to look for a tool, and
+prose in a system prompt competes with a habit and loses, because the habit does
+not involve a decision. Two things address initiation instead.
+
+**Make the tool beat the pipeline, not tie with it.** The `hashsum` above is the
+worked example: a tool that only hashed a string was confined to data the caller
+already had, which is the one case where a tool is not worth calling. Reading a
+file and resolving a manifest is work the caller cannot do in its head.
+
+**[`docs/hooks/forge-nudge.sh`](docs/hooks/forge-nudge.sh)** is a Claude Code
+`PreToolUse` hook that names the forge tool for a job as the shell command for
+it is about to run — the only channel that arrives at the moment of the habit
+rather than before it. It never blocks and speaks once per session per tool:
+
+```json
+"hooks": {
+  "PreToolUse": [{
+    "matcher": "Bash",
+    "hooks": [{"type": "command", "command": "~/.claude/hooks/forge-nudge.sh"}]
+  }]
+}
+```
 
 ## Moving tools between machines
 
