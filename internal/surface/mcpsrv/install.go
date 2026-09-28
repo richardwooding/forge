@@ -47,13 +47,14 @@ var errStopAfterDescribe = errors.New("forge: stopping before install to ask for
 func (m *Manager) addInstallTool(srv *mcp.Server, sel labels.Selector) {
 	srv.AddTool(&mcp.Tool{
 		Name: "forge_add_tool",
-		Description: "Compile a Go program and install it as a forge tool, live on every surface " +
-			"immediately -- the MCP equivalent of `forge tool add`. The source must be a single Go " +
-			"file that registers itself with the forge SDK (github.com/richardwooding/forge/sdk/tool), " +
-			"the same shape forge_describe_tool shows for an installed tool. forge asks the connected " +
-			"human to approve before installing anything, and refuses if there is no one to ask. " +
-			"Approval does not undo the risk of compiling: building already runs the Go toolchain, " +
-			"unsandboxed, over the given source, the same trust decision as running `go build` on it " +
+		Description: "Use when you have written the same one-liner twice, or want a capability that " +
+			"outlasts this conversation: state between runs, a checked HTTP call, an exact digest. " +
+			"Takes a single Go file registering itself with github.com/richardwooding/forge/sdk/tool, " +
+			"and the tool is live on every surface immediately -- the MCP equivalent of " +
+			"`forge tool add`. Not worth it for reshaping data already in front of you.\n\n" +
+			"A human approves before anything is installed, and forge refuses if there is no one to " +
+			"ask. That approval does not undo the risk of compiling: building already ran the Go " +
+			"toolchain, unsandboxed, over the source -- the same trust decision as `go build` on it " +
 			"directly.",
 		InputSchema: &jsonschema.Schema{
 			Type: "object",

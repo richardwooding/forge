@@ -30,10 +30,11 @@ import (
 func (m *Manager) addMetaTools(srv *mcp.Server, sel labels.Selector) {
 	srv.AddTool(&mcp.Tool{
 		Name: "forge_search_tools",
-		Description: "Find forge tools that are installed but not in the current view. " +
-			"Returns names, summaries and labels only. Use forge_describe_tool to get " +
-			"one tool's parameters, and ask the user to widen the view if you need to " +
-			"call it.",
+		Description: "Check here before writing a shell pipeline: the tool list you can see is " +
+			"only the current view, and a tool for the job may be installed and hidden. " +
+			"Returns names, summaries and labels only, so asking is cheap -- then " +
+			"forge_describe_tool for one tool's parameters. A hidden tool cannot be " +
+			"called until the user widens the view.",
 		InputSchema: &jsonschema.Schema{
 			Type: "object",
 			Properties: map[string]*jsonschema.Schema{
@@ -50,8 +51,10 @@ func (m *Manager) addMetaTools(srv *mcp.Server, sel labels.Selector) {
 	})
 
 	srv.AddTool(&mcp.Tool{
-		Name:        "forge_describe_tool",
-		Description: "Show one forge tool's operations and input schema, including tools outside the current view.",
+		Name: "forge_describe_tool",
+		Description: "Use after forge_search_tools, when you have a candidate and need to know " +
+			"what it takes. Shows one tool's operations, input schema and the capabilities " +
+			"it wants, including for tools outside the current view.",
 		InputSchema: &jsonschema.Schema{
 			Type: "object",
 			Properties: map[string]*jsonschema.Schema{

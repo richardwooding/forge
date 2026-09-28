@@ -31,11 +31,12 @@ const removeRequestID = "approve_remove"
 func (m *Manager) addRemoveTool(srv *mcp.Server) {
 	srv.AddTool(&mcp.Tool{
 		Name: "forge_remove_tool",
-		Description: "Uninstall a forge tool, removing it from every surface -- the MCP " +
-			"equivalent of `forge tool remove`. This also drops the capabilities the tool " +
-			"had been granted, so reinstalling it later will ask about them again. forge " +
-			"asks the connected human to approve before removing anything, and refuses if " +
-			"there is no one to ask.",
+		Description: "Use to clean up after yourself -- a tool you installed that turned out wrong, " +
+			"or one the user no longer wants. Removes it from every surface, the MCP equivalent of " +
+			"`forge tool remove`.\n\n" +
+			"It also drops the capabilities the tool held, and those are what does not come back: " +
+			"the tool can be reinstalled from its source, every grant has to be given again. A " +
+			"human approves first, and forge refuses if there is no one to ask.",
 		InputSchema: &jsonschema.Schema{
 			Type: "object",
 			Properties: map[string]*jsonschema.Schema{

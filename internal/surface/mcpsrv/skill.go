@@ -35,13 +35,13 @@ const skillRequestID = "approve_skill"
 func (m *Manager) addSkillTool(srv *mcp.Server) {
 	srv.AddTool(&mcp.Tool{
 		Name: "forge_install_skill",
-		Description: "Install forge's Claude Code skill into a repository, writing " +
-			".claude/skills/forge/. The skill teaches an agent when to use an installed forge " +
-			"tool instead of a shell pipeline, and how to write a new one. The content is " +
-			"embedded in this forge binary, so it always matches the forge that is running; " +
-			"the caller chooses only the destination. A human is asked to approve the path " +
-			"before anything is written, because a skill is instructions that later sessions " +
-			"in that repository load automatically.",
+		Description: "Use when working in a repository where forge tools would help and the skill " +
+			"is not installed yet -- it teaches later sessions when to reach for a tool instead of " +
+			"a shell pipeline, and how to write one. Writes .claude/skills/forge/.\n\n" +
+			"The content is embedded in this binary, so it always matches the forge that is " +
+			"running; the caller chooses only the destination. A human approves the path first, " +
+			"because a skill is instructions every later session in that directory loads without " +
+			"anyone opening it.",
 		InputSchema: &jsonschema.Schema{
 			Type: "object",
 			Properties: map[string]*jsonschema.Schema{
