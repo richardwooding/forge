@@ -1,5 +1,7 @@
 # forge
 
+[![M8ven Score](https://m8ven.ai/badge/mcp/richardwooding/forge)](https://m8ven.ai/mcp/richardwooding/forge)
+
 **A multitool that builds itself.**
 
 Hand `forge` a Go program; it compiles it to WebAssembly, harvests a manifest from
