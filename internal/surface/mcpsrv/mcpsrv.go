@@ -135,6 +135,10 @@ func (m *Manager) Server(key string, sel labels.Selector) (*mcp.Server, error) {
 
 	if m.opts.AllowInstall {
 		m.addInstallTool(srv, sel)
+		// Uninstalling sits behind the same flag: it is the same class of act,
+		// and an agent allowed to install should be able to undo it rather
+		// than leaving the clearing up to someone at a terminal.
+		m.addRemoveTool(srv)
 	}
 	return srv, nil
 }

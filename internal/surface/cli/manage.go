@@ -99,12 +99,32 @@ func (a *App) cmdTool() *cobra.Command {
 		Use:     "remove <name>",
 		Aliases: []string{"rm"},
 		Short:   "Uninstall a tool",
-		Args:    cobra.ExactArgs(1),
+		Long: "Uninstalls a tool and drops the capabilities it had been granted, so that\n" +
+			"anything installed under the same name later is asked about afresh.\n\n" +
+			"To upgrade a tool instead, use `forge tool add` on its source: replacing\n" +
+			"keeps the answers you have already given, which removing deliberately\n" +
+			"does not.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
+			// Read the grants before removing, so the message can name what
+			// was actually dropped rather than claiming something generic.
+			held := a.tk.Policy().Granted(args[0]).Kinds()
+
 			if err := a.tk.Remove(args[0]); err != nil {
 				return err
 			}
-			fmt.Fprintf(c.OutOrStdout(), "removed %s\n", args[0])
+
+			th := ui.ForWriter(c.OutOrStdout())
+			fmt.Fprintf(c.OutOrStdout(), "removed %s\n", th.Name.Render(args[0]))
+			if len(held) > 0 {
+				kinds := make([]string, 0, len(held))
+				for _, k := range held {
+					kinds = append(kinds, k.Badge()+" "+string(k))
+				}
+				fmt.Fprintf(c.OutOrStdout(), "  dropped %s\n", strings.Join(kinds, "  "))
+				fmt.Fprintf(c.OutOrStdout(), "  %s\n", th.Subtle.Render(
+					"a tool installed under this name later will be asked about again"))
+			}
 			return nil
 		},
 		ValidArgsFunction: a.completeToolNames,

@@ -301,12 +301,35 @@ func (tk *Toolkit) Add(ctx context.Context, src string, opts ...AddOption) (*Add
 	return &AddResult{Record: rec, Replaced: replaced, Timings: t}, nil
 }
 
-// Remove uninstalls a tool.
+// Remove uninstalls a tool and drops what it was allowed to do.
+//
+// Revoking is the point of doing this here rather than in the command: a name
+// that keeps its capabilities after the tool holding them is gone will hand
+// them to whatever is installed under that name next, without asking. That is
+// the same fault `forge import` had until v0.5.1.
+//
+// It is deliberately not what `forge tool add` does when it replaces a tool.
+// Replacing is how you upgrade, and re-asking on every rebuild teaches people
+// to say yes without reading; removing is how you say you no longer want the
+// thing at all. The two mean different things and now behave differently.
+//
+// Policy.Revoke clears a recorded refusal as well as a grant, which is right:
+// a fresh tool under a reused name should inherit neither a yes nor a no. A
+// "no" that outlived its tool is how issue #2 disabled one permanently.
 func (tk *Toolkit) Remove(name string) error {
+	// The store first. If that fails the tool is still installed, and a tool
+	// that is still installed should keep the capabilities it was given.
 	if err := tk.store.Remove(name); err != nil {
 		return err
 	}
 	tk.invalidate(name)
+
+	// If this fails the tool is already gone and a stale grant is left behind,
+	// which the next install under that name would inherit. Say so rather than
+	// reporting a clean removal.
+	if err := tk.policy.Revoke(name); err != nil {
+		return fmt.Errorf("removed %s, but could not drop the capabilities it held: %w", name, err)
+	}
 	return nil
 }
 

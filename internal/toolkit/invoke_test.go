@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/richardwooding/forge/internal/capability"
+	"github.com/richardwooding/forge/internal/policy"
 	"github.com/richardwooding/forge/internal/toolkit"
 )
 
@@ -332,5 +333,77 @@ func TestACalleesFailureSaysWhy(t *testing.T) {
 	}
 	if !strings.Contains(got.Result, "echoer will not say that") {
 		t.Errorf("the callee's reason did not reach the caller: %q", got.Result)
+	}
+}
+
+// TestRemoveDropsTheGrants is the reason this change exists.
+//
+// Uninstalling used to leave the tool's capabilities recorded against its
+// name, so a different tool installed under that name inherited them without
+// anyone being asked. That is the fault `forge import` had until v0.5.1, and
+// it survived there because the test guarding it asserted on a field nothing
+// read. This one asserts on the policy, which is what actually decides.
+func TestRemoveDropsTheGrants(t *testing.T) {
+	tk := invokeFixture(t)
+	grant(t, tk, "echoer")
+
+	if got := tk.Policy().Granted("echoer"); len(got.Kinds()) == 0 {
+		t.Fatal("the fixture granted nothing, so this test would pass vacuously")
+	}
+
+	if err := tk.Remove("echoer"); err != nil {
+		t.Fatal(err)
+	}
+	if got := tk.Policy().Granted("echoer"); len(got.Kinds()) != 0 {
+		t.Errorf("the name kept %v after the tool was removed; whatever is installed "+
+			"under it next would inherit them", got.Kinds())
+	}
+}
+
+// TestRemoveDropsARecordedRefusal: a "no" must not outlive its tool either.
+//
+// A recorded refusal short-circuits the next resolve, which is how issue #2
+// disabled a tool permanently. Attached to a name rather than a tool, it would
+// disable something that had never been asked about at all. Asserted through
+// the resolver's own behaviour, since the record itself is private to policy:
+// before removal the refusal answers for the tool, and afterwards it does not.
+func TestRemoveDropsARecordedRefusal(t *testing.T) {
+	tk := invokeFixture(t)
+
+	if err := tk.Policy().Refuse("echoer", []policy.Request{
+		{Tool: "echoer", Kind: capability.Secret, Scope: []string{"shared", "private"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	input, err := json.Marshal(map[string]string{"word": "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = tk.Invoke(context.Background(), toolkit.Call{Tool: "echoer", Op: "run", Input: input})
+	if err == nil || !strings.Contains(err.Error(), "refused") {
+		t.Fatalf("the refusal should answer for the tool before removal, got: %v", err)
+	}
+
+	if err := tk.Remove("echoer"); err != nil {
+		t.Fatal(err)
+	}
+	reinstall(t, tk, "echoer", echoerSource)
+
+	_, err = tk.Invoke(context.Background(), toolkit.Call{Tool: "echoer", Op: "run", Input: input})
+	if err != nil && strings.Contains(err.Error(), "refused") {
+		t.Errorf("the refusal outlived the tool it was about: %v", err)
+	}
+}
+
+// reinstall builds a tool from source into an existing toolkit.
+func reinstall(t *testing.T, tk *toolkit.Toolkit, name, src string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tk.Add(context.Background(), dir); err != nil {
+		t.Skipf("cannot rebuild %s: %v", name, err)
 	}
 }

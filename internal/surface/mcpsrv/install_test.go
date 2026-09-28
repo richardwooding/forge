@@ -262,3 +262,111 @@ func TestInstallBuildFailureIsAResult(t *testing.T) {
 		t.Error("approval was requested for source that never compiled")
 	}
 }
+
+// TestRemoveToolIsOffByDefault: uninstalling sits behind the same flag as
+// installing, so a server that was not asked to allow either exposes neither.
+func TestRemoveToolIsOffByDefault(t *testing.T) {
+	tk := freshToolkit(t)
+	mgr := mcpsrv.New(mcpsrv.Options{Toolkit: tk})
+	srv, err := mgr.Server("", labels.All)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range listNames(t, connect(t, srv)) {
+		if name == "forge_remove_tool" {
+			t.Fatal("forge_remove_tool is present without AllowInstall")
+		}
+	}
+}
+
+// TestRemoveToolAsksApprovalAndRemoves is the feature: install a tool, remove
+// it, and watch it leave the live tool list in the same session.
+func TestRemoveToolAsksApprovalAndRemoves(t *testing.T) {
+	tk := freshToolkit(t)
+	mgr := mcpsrv.New(mcpsrv.Options{Toolkit: tk, AllowInstall: true})
+	srv, err := mgr.Server("", labels.All)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := connectWithElicitation(t, srv, approve(true))
+
+	if _, err := sess.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "forge_add_tool", Arguments: map[string]any{"source": pingSrc},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := sess.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "forge_remove_tool", Arguments: map[string]any{"name": "ping"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		text, _ := res.Content[0].(*mcp.TextContent)
+		t.Fatalf("remove reported an error: %v", text)
+	}
+
+	if _, err := tk.Get("ping"); err == nil {
+		t.Error("ping is still in the store")
+	}
+	for _, n := range listNames(t, sess) {
+		if n == "ping" {
+			t.Error("ping is still offered after being removed; the list was not refreshed")
+		}
+	}
+}
+
+// TestRemoveDeclinedKeepsTheTool: the gate doing its job in the direction that
+// matters more, since a wrongly removed tool takes its grants with it.
+func TestRemoveDeclinedKeepsTheTool(t *testing.T) {
+	tk := freshToolkit(t)
+	mgr := mcpsrv.New(mcpsrv.Options{Toolkit: tk, AllowInstall: true})
+	srv, err := mgr.Server("", labels.All)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := connectWithElicitation(t, srv, approve(true))
+	if _, err := sess.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "forge_add_tool", Arguments: map[string]any{"source": pingSrc},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A second session that says no.
+	refusing := connectWithElicitation(t, srv, approve(false))
+	res, err := refusing.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "forge_remove_tool", Arguments: map[string]any{"name": "ping"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Error("a declined removal reported success")
+	}
+	if _, err := tk.Get("ping"); err != nil {
+		t.Errorf("ping was removed despite the refusal: %v", err)
+	}
+}
+
+// TestRemoveUnknownToolIsAResult: asking to remove something that is not there
+// is an ordinary answer, not a protocol error, so an agent can recover.
+func TestRemoveUnknownToolIsAResult(t *testing.T) {
+	tk := freshToolkit(t)
+	mgr := mcpsrv.New(mcpsrv.Options{Toolkit: tk, AllowInstall: true})
+	srv, err := mgr.Server("", labels.All)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := connectWithElicitation(t, srv, approve(true))
+
+	res, err := sess.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "forge_remove_tool", Arguments: map[string]any{"name": "nothing-here"},
+	})
+	if err != nil {
+		t.Fatalf("an unknown tool became a protocol error: %v", err)
+	}
+	if !res.IsError {
+		t.Error("removing a tool that does not exist reported success")
+	}
+}
