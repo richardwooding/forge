@@ -42,13 +42,40 @@ cmd=$(printf '%s' "$payload" | jq -r '.tool_input.command // empty' 2>/dev/null)
 [ -n "$cmd" ] || exit 0
 session=$(printf '%s' "$payload" | jq -r '.session_id // "unknown"' 2>/dev/null) || session=unknown
 
+# Heredoc bodies are data, not commands. This one is not hypothetical: the
+# first time this hook ran for real it fired on a `cat > msg <<EOF` whose text
+# happened to contain "| sha256sum -c -", which is nobody running anything.
+# Writing a release note is the last moment to interrupt someone about their
+# shell habits.
+strip_heredocs() {
+	awk '
+		# Inside a body: the delimiter alone on a line ends it. Everything
+		# between is dropped, including the line that opened it.
+		skip {
+			if ($0 == delim || $0 == delim "\r") skip = 0
+			next
+		}
+		match($0, /<<-?[[:space:]]*["'"'"']?[A-Za-z_][A-Za-z0-9_]*["'"'"']?/) {
+			d = substr($0, RSTART, RLENGTH)
+			gsub(/^<<-?[[:space:]]*|["'"'"']/, "", d)
+			delim = d
+			skip = 1
+			next
+		}
+		{ print }
+	'
+}
+
 # A binary counts only where a command name can appear: the start of the line,
 # or after a pipe, semicolon, &&, || or an opening parenthesis. Without this a
 # URL containing "curl" or a file called checksums-sha256sum.txt would fire it,
 # and a nudge that cries wolf is one nobody reads.
 at_command_position() {
-	printf '%s' "$cmd" | grep -Eqi "(^|[;&|(]|&&|\|\|)[[:space:]]*(sudo[[:space:]]+)?($1)([[:space:]]|$)"
+	printf '%s' "$scanned" | grep -Eqi "(^|[;&|(]|&&|\|\|)[[:space:]]*(sudo[[:space:]]+)?($1)([[:space:]]|$)"
 }
+
+scanned=$(printf '%s' "$cmd" | strip_heredocs)
+[ -n "$scanned" ] || exit 0
 
 suggest=""
 note=""
