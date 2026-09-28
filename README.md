@@ -146,6 +146,17 @@ version of `watch` did not ask for it, so `since` ran perfectly and stamped
 every record it wrote with `2022-01-01`. Nothing failed. It was only found by
 reading the output.
 
+### Teaching an agent to reach for them
+
+`forge skill install <repo>` writes a Claude Code skill that explains how to
+write a tool. For the smaller, always-loaded half — a reminder to reach for one
+at all — see [docs/claude-md-snippet.md](docs/claude-md-snippet.md), which is a
+few lines for a `CLAUDE.md`.
+
+Whether any of it works is measurable rather than a matter of opinion:
+`scripts/adoption.py <transcript.jsonl>` counts tool calls against shell calls
+for a session.
+
 ## Moving tools between machines
 
 ```console
