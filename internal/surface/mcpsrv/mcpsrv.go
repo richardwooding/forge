@@ -111,7 +111,7 @@ func (m *Manager) Server(key string, sel labels.Selector) (*mcp.Server, error) {
 		Name:    "forge",
 		Title:   title,
 		Version: Version,
-	}, nil)
+	}, &mcp.ServerOptions{Instructions: instructions(key)})
 
 	e := &entry{server: srv, name: key, selector: sel, names: map[string]bool{}}
 	m.servers[key] = e
@@ -255,17 +255,78 @@ func (m *Manager) buildTool(rec store.Record, op core.OpSpec, name string) (*mcp
 	return t, handler, nil
 }
 
+// instructions are sent once, on initialize, and are the only place forge can
+// say something about its tools as a whole rather than one at a time.
+//
+// It says when NOT to reach for a tool as well as when to, and that is not
+// padding. Measured over a day's work, a model with these tools available and
+// a note telling it to prefer them used one about eight times in a thousand
+// calls -- and the ones it did use were all things it could not do itself.
+// Exhortation is not the missing piece; naming the moments is, and so is
+// admitting that a tool which only reshapes data already in front of the
+// caller is competing with the caller and losing.
+func instructions(view string) string {
+	var b strings.Builder
+	b.WriteString("forge runs these tools in a WebAssembly sandbox, each declaring what it may reach.\n\n")
+	b.WriteString("Prefer one over a shell pipeline when the work:\n")
+	b.WriteString("  - must be exact -- a hash, a checksum, a canonical form. Do not hand-roll or eyeball these.\n")
+	b.WriteString("  - reaches out -- fetching a URL, calling an API.\n")
+	b.WriteString("  - must be remembered -- anything that has to survive between runs or sessions.\n\n")
+	b.WriteString("Do not reach for one to reshape data you can already see; reading it yourself is cheaper.\n\n")
+	b.WriteString("Writing the same one-liner a second time is the signal to make a tool: forge_add_tool " +
+		"takes a single Go file and it is live on every surface at once.\n")
+	if view != "" {
+		fmt.Fprintf(&b, "\nThis connection serves the %q view. forge_search_tools finds installed tools it hides.\n", view)
+	} else {
+		b.WriteString("\nforge_search_tools finds installed tools the current view hides.\n")
+	}
+	return b.String()
+}
+
+// description is what a model reads when choosing between this tool and
+// something else -- including, usually, a shell pipeline. It is the most
+// valuable text in the system and it used to throw most of itself away.
+//
+// Three things it gets right that the first version did not:
+//
+// A tool's own summary and the operation's answer different questions ("what
+// is this thing" and "what does this one do"), so both appear. Taking the
+// first non-empty of the two meant Spec.Summary was never shown at all for any
+// tool with more than one operation.
+//
+// The long Description is included only for a single-operation tool. It used
+// to be repeated verbatim on every operation, so a five-op tool put five
+// identical copies in the caller's context. The full text is still one
+// forge_describe_tool call away, and moving it there costs nothing but makes
+// room for text that actually helps a choice.
+//
+// Labels are here because they are the cheapest trigger words a tool has --
+// "hash", "json", "watch" -- and they were reaching a model only through a
+// meta-tool it had to think to call.
 func description(rec store.Record, op core.OpSpec) string {
 	parts := []string{}
-	for _, s := range []string{op.Summary, rec.Spec.Summary} {
-		if s != "" {
-			parts = append(parts, s)
-			break
-		}
+
+	if op.Summary != "" {
+		parts = append(parts, op.Summary)
 	}
-	if rec.Spec.Description != "" {
+	if s := rec.Spec.Summary; s != "" && s != op.Summary {
+		parts = append(parts, s)
+	}
+
+	// UseWhen is the only field that speaks to the decision rather than the
+	// behaviour, so it goes near the top where a skim will reach it.
+	if rec.Spec.UseWhen != "" {
+		parts = append(parts, "Use when: "+rec.Spec.UseWhen)
+	}
+
+	if len(rec.Spec.Ops) == 1 && rec.Spec.Description != "" {
 		parts = append(parts, rec.Spec.Description)
 	}
+
+	if labels := rec.Labels(); len(labels) > 0 {
+		parts = append(parts, "Labels: "+strings.Join(labels, ", ")+".")
+	}
+
 	// Capabilities belong in the description: a model choosing between tools
 	// should be able to see that one of them reaches the network.
 	if len(rec.Spec.Requires) > 0 {

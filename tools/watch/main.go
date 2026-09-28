@@ -32,12 +32,12 @@ import (
 )
 
 type Args struct {
-	URL    string `json:"url" jsonschema:"a URL returning JSON"`
-	Stream string `json:"stream" jsonschema:"a name to remember this source under; reuse it to see only what is new"`
-	ID     string `json:"id" jsonschema:"the field in each item that identifies it, e.g. 'id', 'tag_name', 'sha'"`
-	Path   string `json:"path,omitempty" jsonschema:"dotted path to the array of items; omit when the response is itself an array"`
+	URL    string   `json:"url" jsonschema:"a URL returning JSON"`
+	Stream string   `json:"stream" jsonschema:"a name to remember this source under; reuse it to see only what is new"`
+	ID     string   `json:"id" jsonschema:"the field in each item that identifies it, e.g. 'id', 'tag_name', 'sha'"`
+	Path   string   `json:"path,omitempty" jsonschema:"dotted path to the array of items; omit when the response is itself an array"`
 	Fields []string `json:"fields,omitempty" jsonschema:"return only these fields of each item, to keep the answer small"`
-	Peek   bool   `json:"peek,omitempty" jsonschema:"report what is new without remembering it"`
+	Peek   bool     `json:"peek,omitempty" jsonschema:"report what is new without remembering it"`
 }
 
 type Out struct {
@@ -56,6 +56,8 @@ var _ = tool.Register(
 		Name:    "watch",
 		Version: "0.1.0",
 		Summary: "Fetch a JSON endpoint and report only what has appeared since last time",
+		UseWhen: "you would otherwise fetch a URL, compare it against what you saw last time, " +
+			"and remember the result -- polling an API for new items",
 		Description: "Fetches a URL, identifies each item by one of its fields, and returns " +
 			"only the items it has not seen before. Remembering is delegated to the `since` " +
 			"tool, so several watchers share one memory.",

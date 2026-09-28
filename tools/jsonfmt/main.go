@@ -32,6 +32,8 @@ var _ = tool.Register(
 		Name:    "jsonfmt",
 		Version: "0.1.0",
 		Summary: "Format, compact and canonicalise JSON",
+		UseWhen: "you need two documents to compare equal, or a stable form to hash or diff. " +
+			"Not for reading JSON you can already see -- do that yourself",
 		Description: "Reshapes JSON text. Needs nothing from the machine it runs on: " +
 			"no filesystem, no network, no secrets.",
 		Labels: []string{"json", "text"},

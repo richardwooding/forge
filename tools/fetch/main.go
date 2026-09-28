@@ -58,6 +58,8 @@ var _ = tool.Register(
 		Name:    "fetch",
 		Version: "0.1.0",
 		Summary: "Retrieve a URL over HTTP",
+		UseWhen: "you need the contents of a URL and would otherwise reach for curl; forge " +
+			"screens the address and refuses anything internal",
 		Description: "Fetches a URL through forge, which screens the address, refuses " +
 			"internal ranges such as the cloud metadata endpoint, and does not follow " +
 			"redirects. Redirects come back as a 3xx with their Location header so you " +

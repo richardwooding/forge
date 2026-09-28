@@ -51,7 +51,7 @@ type NewOut struct {
 	Remembered int `json:"remembered"`
 	// Evicted reports that the oldest identifiers were dropped to stay within
 	// the cap, so a very old item reappearing would read as new again.
-	Evicted int `json:"evicted,omitempty"`
+	Evicted int  `json:"evicted,omitempty"`
 	First   bool `json:"first,omitempty" jsonschema:"true when this stream had never been seen, so everything looked new"`
 }
 
@@ -93,6 +93,8 @@ var _ = tool.Register(
 		Name:    "since",
 		Version: "0.1.0",
 		Summary: "Remember what you have already seen, and report only what is new",
+		UseWhen: "you are checking something repeatedly and only want to hear about changes -- " +
+			"a feed, a build queue, an inbox. It remembers between runs, which you cannot",
 		Description: "Give it a stream name and the things you are looking at; it returns " +
 			"the ones it has not seen before. Use it to check a feed, a build queue or an " +
 			"inbox repeatedly without re-reporting what you already handled.",

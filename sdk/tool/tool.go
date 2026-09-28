@@ -43,6 +43,20 @@ type Spec struct {
 	Labels      []string
 	Needs       []Need
 
+	// UseWhen says when to reach for this tool instead of doing the thing
+	// another way. One sentence, written for whoever is choosing -- which,
+	// over MCP, is a model deciding between this and a shell pipeline.
+	//
+	// Summary says what the tool does; this says when it is the right answer.
+	// Nothing else in a manifest does that job, and without it a tool is only
+	// discoverable by someone who already suspected it existed.
+	//
+	// Worth being honest in it about when NOT to: a tool that merely reshapes
+	// data the caller can already see is competing with the caller and will
+	// lose. The ones that earn a call reach something, remember something, or
+	// have to be exact.
+	UseWhen string
+
 	// Reuse lets forge keep an instance of this tool alive between calls. Only
 	// set it if the tool is genuinely stateless between invocations: package
 	// variables, open files and paused goroutines all survive into the next

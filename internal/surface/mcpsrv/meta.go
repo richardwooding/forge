@@ -116,10 +116,20 @@ func (m *Manager) searchTools(inView labels.Selector, query string) (*mcp.CallTo
 	return res, nil
 }
 
+// matches decides whether a search finds a tool.
+//
+// UseWhen and Description are searched as well as the name and summary,
+// because those are where an author writes the words describing the situation
+// rather than the mechanism -- "checksum", "poll", "remember". Leaving them
+// out meant a tool could carry exactly the trigger someone searched for and
+// still not come back.
 func matches(rec store.Record, query string) bool {
-	if strings.Contains(strings.ToLower(rec.Spec.Name), query) ||
-		strings.Contains(strings.ToLower(rec.Spec.Summary), query) {
-		return true
+	for _, field := range []string{
+		rec.Spec.Name, rec.Spec.Summary, rec.Spec.UseWhen, rec.Spec.Description,
+	} {
+		if strings.Contains(strings.ToLower(field), query) {
+			return true
+		}
 	}
 	for _, l := range rec.Labels() {
 		if strings.Contains(strings.ToLower(l), query) {

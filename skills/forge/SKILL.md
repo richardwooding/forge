@@ -1,6 +1,6 @@
 ---
 name: forge
-description: Use forge's installed tools instead of ad-hoc shell pipelines, and write new forge tools in Go compiled to WebAssembly. Covers discovering tools with forge_search_tools, the single-file tool shape registered from a package-level var, declaring capabilities (net.http, kv, secret, tool.invoke) with reasons a person will read, and handling a *tool.DeniedError by its code. Use when the prompt mentions forge, a forge tool, `forge tool add`, forge_add_tool, a wasm/wasip1 tool, or when a shell one-liner you are about to write for the third time would be better as a tool.
+description: Use a sandboxed forge tool instead of a shell pipeline, and write new ones in Go compiled to WebAssembly. Use when you are about to hash or checksum something, fetch a URL, or keep state between runs; when you are writing a one-liner you have written before; when a task needs to remember what it saw last time; or when the prompt mentions forge, a forge tool, `forge tool add`, forge_add_tool, or wasm/wasip1. Covers discovery with forge_search_tools, the single-file tool shape registered from a package-level var, declaring capabilities (net.http, kv, secret, tool.invoke) with reasons a person will read, handling a *tool.DeniedError by its code, and when NOT to build a tool.
 ---
 
 # forge
@@ -28,15 +28,34 @@ exist and are still callable:
 
 Two round trips beats carrying fifty schemas you will not use.
 
-## 2. A recurring one-liner is a candidate tool
+## 2. A recurring one-liner is a candidate tool — sometimes
 
 If you are about to write the same `sha256sum | cut -d' ' -f1` for the third
 time, that is a tool. Writing one is cheap and it becomes available everywhere
 at once.
 
-**Prefer a tool that needs nothing.** A tool declaring no capabilities never
-prompts, can reach nothing, and is the right shape for anything that is a pure
-function of its input.
+### When not to build one
+
+This is the part that is easy to get wrong, and it was measured rather than
+guessed. Over a full day of work with these tools installed, the ones actually
+reached for were all doing something the caller could not: hashing, fetching,
+remembering. A tool that only reshapes data already in the caller's context was
+used **once**, because reading that data directly is cheaper than a round trip.
+
+So build a tool when the work:
+
+- **cannot** be done in context — the network, the filesystem, state between
+  runs, a secret;
+- **should not** be done by eye — a hash, a checksum, a canonical form, anything
+  where being approximately right is being wrong;
+- would **cost more** in context than the call — processing something large and
+  returning a small answer.
+
+Do not build one to reformat, extract or restructure data the caller can
+already see. It will compete with the caller and lose.
+
+**Prefer a tool that needs nothing** when the shape above still fits: a tool
+declaring no capabilities never prompts and can reach nothing.
 
 ### The shape
 

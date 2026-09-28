@@ -37,6 +37,7 @@ type manifestJSON struct {
 	Labels      []string `json:"labels,omitempty"`
 	Ops         []opJSON `json:"ops"`
 	Requires    []Need   `json:"requires,omitempty"`
+	UseWhen     string   `json:"useWhen,omitempty"`
 	Reuse       bool     `json:"reuse,omitempty"`
 	ABI         int      `json:"abi"`
 }
@@ -65,6 +66,7 @@ func describe() []byte {
 		Summary:     registered.spec.Summary,
 		Description: registered.spec.Description,
 		Labels:      registered.spec.Labels,
+		UseWhen:     registered.spec.UseWhen,
 		Requires:    registered.spec.Needs,
 		Reuse:       registered.spec.Reuse,
 		ABI:         ABIVersion,

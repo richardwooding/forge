@@ -102,6 +102,12 @@ type Spec struct {
 	Labels      []string `json:"labels,omitempty"`
 	Ops         []OpSpec `json:"ops"`
 
+	// UseWhen says when to reach for this tool rather than doing the thing
+	// another way. Summary says what it does; this says when it is the right
+	// answer, which is the question a caller choosing between tools is
+	// actually asking.
+	UseWhen string `json:"useWhen,omitempty"`
+
 	// Requires is what the tool asks for. What it gets is this intersected with
 	// the user's policy; see capability.Intersect.
 	Requires []capability.Request `json:"requires,omitempty"`

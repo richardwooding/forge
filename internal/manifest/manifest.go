@@ -117,6 +117,9 @@ func Validate(spec core.Spec) (*Loaded, error) {
 	if len(spec.Name) > MaxNameLen {
 		return nil, errf(spec.Name, "name", "longer than %d characters", MaxNameLen)
 	}
+	if len(spec.UseWhen) > MaxSummaryLen {
+		return nil, errf(spec.Name, "useWhen", "longer than %d characters; it is one sentence about when to reach for this tool, not a second description", MaxSummaryLen)
+	}
 	if len(spec.Summary) > MaxSummaryLen {
 		return nil, errf(spec.Name, "summary", "longer than %d characters", MaxSummaryLen)
 	}
