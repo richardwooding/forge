@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -194,7 +195,7 @@ func narrowRequests(name string, declared []capability.Request, narrowed map[cap
 		}
 		if !open(req.Scope) {
 			for _, s := range scope {
-				if !contains(req.Scope, s) {
+				if !slices.Contains(req.Scope, s) {
 					return nil, fmt.Errorf("%s asks for %s only over %s, so it cannot be narrowed to %q",
 						name, req.Kind, strings.Join(req.Scope, ", "), s)
 				}
@@ -208,21 +209,7 @@ func narrowRequests(name string, declared []capability.Request, narrowed map[cap
 
 // open reports whether a declared scope is the unrestricted "*".
 func open(scope []string) bool {
-	for _, s := range scope {
-		if s == "*" {
-			return true
-		}
-	}
-	return false
-}
-
-func contains(haystack []string, needle string) bool {
-	for _, h := range haystack {
-		if h == needle {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(scope, "*")
 }
 
 func declaredKinds(reqs []capability.Request) string {

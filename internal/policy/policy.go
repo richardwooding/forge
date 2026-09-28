@@ -389,12 +389,7 @@ func satisfied(held capability.Set, req capability.Request) bool {
 
 // openScope reports whether a declared scope is the unrestricted "*".
 func openScope(scope []string) bool {
-	for _, s := range scope {
-		if s == "*" {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(scope, "*")
 }
 
 func grantsFor(requests []capability.Request) []capability.Grant {
