@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/richardwooding/forge/internal/capability"
@@ -121,16 +122,104 @@ func run(ctx *tool.Context, a Args) (Out, error) {
 }
 `
 
+// The three fixture tools are compiled once for the whole package and then
+// copied per test.
+//
+// They used to be rebuilt for every test: seven fixtures times three tools is
+// twenty-one invocations of the Go toolchain, each producing a wasm module
+// identical to the last. That is what tipped `go test ./...` past its ten
+// minute ceiling on the macOS runner, where -race roughly doubles everything.
+// Copying a directory costs milliseconds, and each test still gets a forge
+// home of its own, so nothing is shared that a test could tread on.
+var (
+	fixtureOnce sync.Once
+	fixtureData string // a forge Data dir with the three tools installed
+	fixtureErr  error
+)
+
+// buildFixtures installs the three tools into a throwaway home that outlives
+// the test that triggered it. TestMain removes it.
+func buildFixtures() {
+	sdk, err := filepath.Abs(filepath.Join("..", "..", "sdk"))
+	if err != nil {
+		fixtureErr = err
+		return
+	}
+	home, err := os.MkdirTemp("", "forge-invoke-fixture-*")
+	if err != nil {
+		fixtureErr = err
+		return
+	}
+	fixtureData = home
+
+	ctx := context.Background()
+	tk, err := toolkit.New(ctx, toolkit.Config{
+		Paths: toolkit.Paths{
+			Data:   filepath.Join(home, "data"),
+			Cache:  filepath.Join(os.TempDir(), forgeTestCache),
+			Config: filepath.Join(home, "config"),
+		},
+		SDKReplace: sdk,
+	})
+	if err != nil {
+		fixtureErr = err
+		return
+	}
+	defer func() { _ = tk.Close(context.Background()) }()
+
+	// "other" is echoer under a different name: a tool caller was never
+	// granted permission to invoke, which is what the scope test needs.
+	otherSource := strings.NewReplacer(
+		`Name:    "echoer"`, `Name:    "other"`,
+	).Replace(echoerSource)
+
+	for _, src := range []string{callerSource, echoerSource, otherSource} {
+		dir, err := os.MkdirTemp("", "forge-fixture-src-*")
+		if err != nil {
+			fixtureErr = err
+			return
+		}
+		if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644); err != nil {
+			fixtureErr = err
+			return
+		}
+		if _, err := tk.Add(ctx, dir); err != nil {
+			fixtureErr = err
+			return
+		}
+		_ = os.RemoveAll(dir)
+	}
+}
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if fixtureData != "" {
+		_ = os.RemoveAll(fixtureData)
+	}
+	os.Exit(code)
+}
+
 func invokeFixture(t *testing.T) *toolkit.Toolkit {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("builds wasm tools with the Go toolchain; skipped in -short")
 	}
+	fixtureOnce.Do(buildFixtures)
+	if fixtureErr != nil {
+		t.Skipf("cannot build the fixture tools: %v", fixtureErr)
+	}
+
 	sdk, err := filepath.Abs(filepath.Join("..", "..", "sdk"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	home := t.TempDir()
+	// A copy, so a test that grants, revokes or removes cannot reach into
+	// another one. Only the compiling is shared.
+	if err := os.CopyFS(filepath.Join(home, "data"), os.DirFS(filepath.Join(fixtureData, "data"))); err != nil {
+		t.Fatal(err)
+	}
+
 	ctx := context.Background()
 	tk, err := toolkit.New(ctx, toolkit.Config{
 		Paths: toolkit.Paths{
@@ -144,26 +233,6 @@ func invokeFixture(t *testing.T) *toolkit.Toolkit {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = tk.Close(context.Background()) })
-
-	// "other" is echoer under a different name: a tool caller was never
-	// granted permission to invoke, which is what the scope test needs.
-	otherSource := strings.NewReplacer(
-		`Name:    "echoer"`, `Name:    "other"`,
-	).Replace(echoerSource)
-
-	for name, src := range map[string]string{
-		"caller": callerSource,
-		"echoer": echoerSource,
-		"other":  otherSource,
-	} {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tk.Add(ctx, dir); err != nil {
-			t.Skipf("cannot build %s: %v", name, err)
-		}
-	}
 
 	if s := tk.Secrets(); s != nil {
 		for _, n := range []string{"shared", "private"} {

@@ -38,7 +38,13 @@ jobs:
       # The sandbox tests compile real wasip1 guests with the Go toolchain and
       # run them under wazero. They are the only tests that prove the jail, so
       # they are not behind a build tag -- but they are skipped by -short.
-      - run: go test -race -timeout 600s -coverprofile=coverage.out ./...
+      # 20 minutes, not 10. This suite compiles dozens of wasm modules with the
+      # real Go toolchain on purpose -- that is the only way the sandbox tests
+      # mean anything -- and on a cold macOS runner under -race that is genuinely
+      # slow. The old ceiling was set when the suite was half this size and was
+      # reached by a change that added six tests. Raising it is the honest
+      # answer; the per-test-binary timeout still catches a real hang.
+      - run: go test -race -timeout 1200s -coverprofile=coverage.out ./...
 
   short:
     runs-on: ubuntu-latest
