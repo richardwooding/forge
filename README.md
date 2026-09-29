@@ -315,6 +315,38 @@ prevents that; it is what both capabilities are for. forge shows the pair
 together at approval time so you can notice, rather than meeting two reasonable
 questions one after the other.
 
+## Building behind a proxy
+
+`forge tool add` uses your machine's effective Go module configuration, so a
+build works wherever `go build` already does. That means your `GOPROXY` —
+including a private module proxy or an air-gapped mirror — along with
+`GOPRIVATE`/`GONOSUMDB`, your `GOSUMDB` (which may be `off`), and, for private
+modules fetched over `git`, your `insteadOf` rewrites, SSH agent and `~/.netrc`.
+
+What it does *not* inherit is anything that would change what a tool **is**.
+`GOFLAGS` is emptied, `GOWORK` is `off`, `GOTOOLCHAIN` stays pinned, and the
+module and build caches live under forge's own state directory, so `go env -w`
+settings cannot leak into a build and your caches are never touched. `HOME` is
+forge's state dir; only the named git files cross over, rather than your whole
+home directory with its credential helpers and hooks.
+
+This does not weaken the artifact — with a committed `go.sum` and
+`-mod=readonly`, checksums decide *which* bytes are acceptable and the proxy
+only decides where they come from. `forge doctor` prints what was actually
+resolved, so the configuration is visible rather than assumed:
+
+```console
+$ forge doctor
+  ✓ module proxy    https://mirror.example/goproxy
+  ! checksum db     off — module checksums are not verified against a database
+  ✓ private modules corp.example/*
+```
+
+`FORGE_HERMETIC=1` ignores all of it and builds with forge's own settings: the
+public proxy and checksum database, no private patterns, no git identity. That
+is the reproducible, machine-independent build, and the right one for CI and
+releases. `FORGE_OFFLINE=1` still forces `GOPROXY=off` and beats both.
+
 ## Security
 
 `forge tool add` compiles Go source on your machine with the ordinary toolchain.

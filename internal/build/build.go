@@ -49,6 +49,21 @@ type Config struct {
 	// same time, and it is written only into the throwaway copy -- a replace
 	// must never reach a committed go.mod.
 	SDKReplace string
+
+	// Hermetic builds with forge's own module configuration instead of the
+	// machine's: the public proxy, the public checksum database, no private
+	// patterns and no git identity. It is the reproducible, machine-independent
+	// build, and the right one for CI and releases.
+	//
+	// Off by default, because forge was previously stricter than the
+	// developer's own `go build` and so could not install a tool at all behind
+	// a private module proxy or an air-gapped mirror.
+	Hermetic bool
+
+	// Host is the machine's effective module configuration. Left zero, New
+	// resolves it by asking the toolchain; a caller that already knows (or a
+	// test) may supply it.
+	Host HostGoEnv
 }
 
 func (c Config) withDefaults() Config {
@@ -82,6 +97,30 @@ type Provenance struct {
 	GoSumHash string    `json:"goSumHash,omitempty"`
 	WasmSHA   string    `json:"wasmSha256"`
 	Built     time.Time `json:"built"`
+
+	// GoProxy and Hermetic record where the dependencies were fetched from and
+	// under which of the two environments. Neither changes the artifact -- the
+	// go.sum decides that -- but when a rebuild does not match, the first
+	// question is which module source produced it, and nothing else recorded
+	// the answer.
+	GoProxy  string `json:"goProxy,omitempty"`
+	Hermetic bool   `json:"hermetic,omitempty"`
+}
+
+// EnvInfo is the effective build environment, for `forge doctor`. It reports
+// what was decided rather than what was configured, because the failure this
+// answers -- a build that cannot reach its modules -- is invisible until
+// someone can see which proxy forge actually used.
+type EnvInfo struct {
+	GoProxy   string
+	GoSumDB   string
+	Private   string
+	HTTPProxy string
+	Hermetic  bool
+
+	// HostResolved is false when the toolchain could not be asked, in which
+	// case the values above are forge's own defaults rather than the machine's.
+	HostResolved bool
 }
 
 // Artifact is a compiled tool.
@@ -94,7 +133,43 @@ type Artifact struct {
 type Builder struct{ cfg Config }
 
 // New returns a Builder.
-func New(cfg Config) *Builder { return &Builder{cfg: cfg.withDefaults()} }
+//
+// Unless the build is hermetic, this asks the host toolchain for its effective
+// module configuration once, here, rather than per build: the answer is a
+// property of the machine, the probe runs a subprocess, and resolving it once
+// means a build cannot straddle a change to the env file halfway through.
+// Failure to resolve is not an error -- it leaves forge on its own defaults,
+// which is exactly where it was before any of this existed.
+func New(cfg Config) *Builder {
+	cfg = cfg.withDefaults()
+	if !cfg.Hermetic && !cfg.Host.Resolved {
+		cfg.Host = resolveHostGoEnv(context.Background(), cfg.GoBin)
+	}
+	return &Builder{cfg: cfg}
+}
+
+// EnvInfo reports the build environment that was actually resolved.
+func (b *Builder) EnvInfo() EnvInfo {
+	info := EnvInfo{
+		GoProxy:      effectiveProxy(b.cfg),
+		GoSumDB:      "sum.golang.org",
+		Hermetic:     b.cfg.Hermetic,
+		HostResolved: b.cfg.Host.Resolved,
+	}
+	if !b.cfg.Hermetic {
+		if b.cfg.Host.Resolved && b.cfg.Host.GOSUMDB != "" {
+			info.GoSumDB = b.cfg.Host.GOSUMDB
+		}
+		info.Private = b.cfg.Host.GOPRIVATE
+		for _, k := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"} {
+			if v := os.Getenv(k); v != "" {
+				info.HTTPProxy = v
+				break
+			}
+		}
+	}
+	return info
+}
 
 // Available reports the Go toolchain version, and whether it could be found.
 func (b *Builder) Available(ctx context.Context) (string, bool) {
@@ -203,6 +278,8 @@ func (b *Builder) Build(ctx context.Context, src string) (*Artifact, error) {
 		Flags:     flags[1 : len(flags)-3],
 		WasmSHA:   hex.EncodeToString(sum[:]),
 		Built:     time.Now().UTC(),
+		GoProxy:   effectiveProxy(b.cfg),
+		Hermetic:  b.cfg.Hermetic,
 	}
 	if v, ok := b.Available(ctx); ok {
 		prov.GoVersion = v

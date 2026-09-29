@@ -31,6 +31,11 @@ func run() int {
 	tk, err := toolkit.New(ctx, toolkit.Config{
 		SDKReplace: os.Getenv("FORGE_SDK_DIR"),
 		Offline:    os.Getenv("FORGE_OFFLINE") != "",
+		// Builds with forge's own module configuration instead of this
+		// machine's. The default is to use the machine's, so that installing a
+		// tool works wherever `go build` already does; this is the opposite
+		// trade -- reproducible and machine-independent, for CI and releases.
+		Hermetic: os.Getenv("FORGE_HERMETIC") != "",
 		// Lets a tool reach a service on this machine, for developing against
 		// a local API. An environment variable rather than a flag because it
 		// is a property of the machine you are on, not of one command -- and

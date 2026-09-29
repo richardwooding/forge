@@ -40,6 +40,10 @@ type Config struct {
 	// Offline builds tools without network access.
 	Offline bool
 
+	// Hermetic builds tools with forge's own module configuration rather than
+	// the machine's. See build.Config.Hermetic; FORGE_HERMETIC selects it.
+	Hermetic bool
+
 	// InvokeTimeout bounds one tool call.
 	InvokeTimeout time.Duration
 
@@ -97,6 +101,7 @@ func New(ctx context.Context, cfg Config) (*Toolkit, error) {
 		StateDir:   filepath.Join(cfg.Paths.Cache, "build"),
 		SDKReplace: cfg.SDKReplace,
 		Proxy:      proxy,
+		Hermetic:   cfg.Hermetic,
 	})
 
 	e, err := wasmrt.NewEngine(ctx, wasmrt.Config{
@@ -180,6 +185,11 @@ func (tk *Toolkit) Store() *store.Store { return tk.store }
 func (tk *Toolkit) GoAvailable(ctx context.Context) (string, bool) {
 	return tk.builder.Available(ctx)
 }
+
+// BuildEnvInfo reports the module configuration tool builds actually use, for
+// `forge doctor`. It exists because the failure it diagnoses -- a build that
+// cannot reach its modules -- says nothing about which proxy was tried.
+func (tk *Toolkit) BuildEnvInfo() build.EnvInfo { return tk.builder.EnvInfo() }
 
 // AddResult reports what installing a tool produced.
 type AddResult struct {

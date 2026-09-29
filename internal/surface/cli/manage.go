@@ -2,12 +2,14 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/richardwooding/forge/internal/build"
 	"github.com/richardwooding/forge/internal/buildinfo"
 	"github.com/richardwooding/forge/internal/capability"
 	"github.com/richardwooding/forge/internal/labels"
@@ -323,6 +325,7 @@ func (a *App) cmdDoctor() *cobra.Command {
 			} else {
 				fmt.Fprintf(out, "  %s\n", th.Warn("go toolchain    not found — forge can still run installed tools, but not build new ones"))
 			}
+			reportBuildEnv(out, th, a.tk.BuildEnvInfo())
 			records, err := a.tk.List(labels.All)
 			if err != nil {
 				return err
@@ -341,6 +344,45 @@ func (a *App) cmdDoctor() *cobra.Command {
 			}
 			return nil
 		},
+	}
+}
+
+// reportBuildEnv prints where tool builds fetch their modules from.
+//
+// Worth the four lines because the configuration it describes is otherwise
+// invisible until a build fails, and the failure -- a proxy returning
+// Forbidden, several frames deep in `go mod tidy` -- does not say which proxy
+// was tried or why that one. It also answers the fair objection to adopting the
+// machine's settings: the checksum database can now be off, so forge says so
+// out loud rather than leaving it to be assumed.
+func reportBuildEnv(out io.Writer, th ui.Theme, info build.EnvInfo) {
+	fmt.Fprintf(out, "  %s\n", th.OK("module proxy    %s", info.GoProxy))
+
+	if info.GoSumDB == "off" {
+		// Not a failure: an air-gapped mirror cannot reach sum.golang.org, and
+		// refusing to build there was the bug. But it is the one setting a
+		// person should be told is off rather than left to discover.
+		fmt.Fprintf(out, "  %s\n", th.Warn("checksum db     off — module checksums are not verified against a database"))
+	} else {
+		fmt.Fprintf(out, "  %s\n", th.OK("checksum db     %s", info.GoSumDB))
+	}
+
+	if info.Private != "" {
+		fmt.Fprintf(out, "  %s\n", th.OK("private modules %s", info.Private))
+	}
+	if info.HTTPProxy != "" {
+		fmt.Fprintf(out, "  %s\n", th.OK("http proxy      %s", info.HTTPProxy))
+	}
+
+	switch {
+	case info.Hermetic:
+		fmt.Fprintf(out, "  %s\n", th.OK("build mode      hermetic (FORGE_HERMETIC) — this machine's Go settings are ignored"))
+	case !info.HostResolved:
+		// The machine was meant to be consulted and could not be, so the values
+		// above are forge's defaults wearing the machine's clothes. Saying so
+		// is the difference between "my proxy is not being used" taking a
+		// minute or an afternoon.
+		fmt.Fprintf(out, "  %s\n", th.Warn("build mode      defaults — could not read this machine's Go configuration"))
 	}
 }
 
