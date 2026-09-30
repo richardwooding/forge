@@ -16,6 +16,16 @@ type HTTPRequest struct {
 	URL     string            `json:"url"`
 	Headers map[string]string `json:"headers,omitempty"`
 	Body    []byte            `json:"body,omitempty"`
+
+	Credential *HTTPCredential `json:"credential,omitempty"`
+}
+
+// HTTPCredential names a secret the host attaches to the request as a header.
+// sdk/tool.Credential mirrors it.
+type HTTPCredential struct {
+	Secret string `json:"secret"`
+	Header string `json:"header,omitempty"`
+	Scheme string `json:"scheme,omitempty"`
 }
 
 // HTTPResponse is what it gets back.
@@ -47,8 +57,19 @@ type KVStore interface {
 }
 
 // SecretSource resolves a named secret.
+//
+// Bound reports whether the secret's owner restricted it to hosts. A bound
+// secret is only ever attached to a request by the host, never handed to a
+// guest, because a value the tool can read is a value it can send anywhere.
 type SecretSource interface {
 	Secret(ctx context.Context, tool, name string) (string, bool, error)
+	Bound(name string) (bool, error)
+}
+
+// CredentialSource resolves a secret for attaching to a request to host,
+// refusing when the secret's binding does not cover that host.
+type CredentialSource interface {
+	Credential(ctx context.Context, tool, name, host string) (string, error)
 }
 
 // ToolInvoker runs another tool on a guest's behalf.
@@ -208,6 +229,14 @@ func (m *hostModule) secretCall(ctx context.Context, inv *Invocation, raw []byte
 	}
 	if d := inv.Grants.Allow(capability.Secret, req.Name); !d.OK {
 		return deny(d.Code, "%s", d.Detail)
+	}
+	bound, err := inv.Services.Secrets.Bound(req.Name)
+	if err != nil {
+		return failed("%v", err)
+	}
+	if bound {
+		return deny(capability.DenyFloor,
+			"secret %q is bound to hosts and can only be attached to a request as a credential", req.Name)
 	}
 
 	v, found, err := inv.Services.Secrets.Secret(ctx, inv.Tool, req.Name)

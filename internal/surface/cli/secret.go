@@ -25,12 +25,16 @@ func (a *App) cmdSecret() *cobra.Command {
 			"environment.",
 	}
 
+	var hosts []string
 	set := &cobra.Command{
 		Use:   "set <name> [value]",
 		Short: "Store a secret",
 		Long: "With no value, forge reads it from the terminal without echoing.\n" +
 			"Pass - to read it from standard input, which is what a script should do:\n" +
-			"a value on the command line ends up in your shell history and in ps.",
+			"a value on the command line ends up in your shell history and in ps.\n\n" +
+			"--host binds the secret to the hosts it belongs to. forge then attaches it\n" +
+			"only to requests for those hosts, and no tool can read its value. Without\n" +
+			"--host, an existing binding is kept, so rotating a token never unbinds it.",
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(c *cobra.Command, args []string) error {
 			name := args[0]
@@ -41,14 +45,48 @@ func (a *App) cmdSecret() *cobra.Command {
 			if value == "" {
 				return errors.New("the secret is empty; nothing was stored")
 			}
+			// Bound first, so a new token is never on disk without its binding.
+			if len(hosts) > 0 {
+				if err := a.tk.Secrets().Bind(name, hosts); err != nil {
+					return err
+				}
+			}
 			if err := a.tk.Secrets().Put(name, value); err != nil {
 				return err
 			}
 			th := ui.ForWriter(c.OutOrStdout())
 			fmt.Fprintf(c.OutOrStdout(), "stored %s\n", th.Name.Render(name))
-			fmt.Fprintf(c.OutOrStdout(), "a tool can read it once you grant it secret(%s)\n", name)
-			return nil
+			return a.describeBinding(c, name)
 		},
+	}
+	set.Flags().StringArrayVar(&hosts, "host", nil, "only ever send this secret to `host` (repeatable; *.example.com allowed)")
+
+	bind := &cobra.Command{
+		Use:   "bind <name> <host>...",
+		Short: "Restrict a secret to the hosts it belongs to",
+		Long: "A bound secret is attached only to requests for these hosts, and no tool\n" +
+			"can read its value. The hosts replace any earlier binding.",
+		Args: cobra.MinimumNArgs(2),
+		RunE: func(c *cobra.Command, args []string) error {
+			if err := a.tk.Secrets().Bind(args[0], args[1:]); err != nil {
+				return err
+			}
+			return a.describeBinding(c, args[0])
+		},
+		ValidArgsFunction: a.completeSecretNames,
+	}
+
+	unbind := &cobra.Command{
+		Use:   "unbind <name>",
+		Short: "Let a secret go to any host its tools may reach",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			if err := a.tk.Secrets().Unbind(args[0]); err != nil {
+				return err
+			}
+			return a.describeBinding(c, args[0])
+		},
+		ValidArgsFunction: a.completeSecretNames,
 	}
 
 	list := &cobra.Command{
@@ -67,7 +105,15 @@ func (a *App) cmdSecret() *cobra.Command {
 			}
 			th := ui.ForWriter(c.OutOrStdout())
 			for _, n := range names {
-				fmt.Fprintln(c.OutOrStdout(), th.Name.Render(n))
+				bound, err := a.tk.Secrets().Hosts(n)
+				if err != nil {
+					return err
+				}
+				if len(bound) == 0 {
+					fmt.Fprintln(c.OutOrStdout(), th.Name.Render(n))
+					continue
+				}
+				fmt.Fprintf(c.OutOrStdout(), "%s → %s\n", th.Name.Render(n), strings.Join(bound, ", "))
 			}
 			return nil
 		},
@@ -88,8 +134,23 @@ func (a *App) cmdSecret() *cobra.Command {
 		ValidArgsFunction: a.completeSecretNames,
 	}
 
-	cmd.AddCommand(set, list, rm)
+	cmd.AddCommand(set, bind, unbind, list, rm)
 	return cmd
+}
+
+// describeBinding says what a tool granted the secret can now do with it.
+func (a *App) describeBinding(c *cobra.Command, name string) error {
+	bound, err := a.tk.Secrets().Hosts(name)
+	if err != nil {
+		return err
+	}
+	if len(bound) == 0 {
+		fmt.Fprintf(c.OutOrStdout(), "a tool granted secret(%s) can read it, or attach it to any host it may reach\n", name)
+		return nil
+	}
+	fmt.Fprintf(c.OutOrStdout(), "bound to %s: forge attaches it only to requests for those hosts, and no tool can read it\n",
+		strings.Join(bound, ", "))
+	return nil
 }
 
 // readSecretValue gets the value from the argument, from stdin, or from the

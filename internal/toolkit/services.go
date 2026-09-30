@@ -20,16 +20,18 @@ import (
 // easier to reason about than one conjured on demand. What decides whether a
 // tool can use one is its grant set, in one place.
 func buildServices(cfg Config, invoker hostabi.ToolInvoker) hostabi.Services {
+	secrets := hostsvc.NewSecrets(hostsvc.SecretsConfig{
+		Dir: filepath.Join(cfg.Paths.Config, "secrets"),
+	})
 	return hostabi.Services{
 		HTTP: hostsvc.NewHTTP(hostsvc.HTTPConfig{
 			AllowPrivate: cfg.AllowPrivateNetwork,
+			Credentials:  secrets,
 		}),
 		KV: hostsvc.NewKV(hostsvc.KVConfig{
 			Dir: filepath.Join(cfg.Paths.Data, "kv"),
 		}),
-		Secrets: hostsvc.NewSecrets(hostsvc.SecretsConfig{
-			Dir: filepath.Join(cfg.Paths.Config, "secrets"),
-		}),
+		Secrets: secrets,
 		Invoker: invoker,
 	}
 }

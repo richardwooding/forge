@@ -291,14 +291,22 @@ host" is not the same as "make this request safely":
   anywhere; the 3xx comes back with its `Location` so the tool can ask again,
   which puts the new URL through the allowlist on its own merits.
 - `Authorization`, `Cookie`, `Host` and `Proxy-*` cannot be set by a tool.
-  Credentials belong in a secret, where they are named and each read is logged.
+  A tool that needs to authenticate names a secret in the request's
+  `Credential` instead, and forge sets the header itself, so the tool never
+  sees the token.
 
 Secrets are files under forge's config directory, mode 0600:
 
 ```console
 $ forge secret set github-token          # typed, not echoed, not in your history
 $ forge secret ls                        # names only, never values
+$ forge secret set whatsapp-token --host graph.facebook.com
 ```
+
+`--host` binds a secret to the hosts it belongs to. forge then attaches it only
+to requests for those hosts, even when a tool may reach others, and refuses to
+hand its value to any tool at all. That turns "this tool can send my token
+anywhere it may reach" into "this token only ever goes to Meta".
 
 They are deliberately not environment variables. The environment is readable by
 everything in a process, cannot be audited per access, and would show up in the
@@ -311,7 +319,8 @@ Link-local stays refused even then.
 
 **One combination is worth pausing over.** A tool holding both `secret` and
 `net.http` can send what it reads wherever it is allowed to reach. No sandbox
-prevents that; it is what both capabilities are for. forge shows the pair
+prevents that for an unbound secret; it is what both capabilities are for. Bind
+the secret to its hosts and it can no longer be read at all. forge shows the pair
 together at approval time so you can notice, rather than meeting two reasonable
 questions one after the other.
 

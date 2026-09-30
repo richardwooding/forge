@@ -59,7 +59,8 @@ forge additionally, and unconditionally:
   merits. Walk chains yourself and bound the hops.
 - **Refuses plain http** unless `http` was granted; https only otherwise.
 - **Refuses guest-set `Authorization`, `Cookie`, `Host` and `Proxy-*`.**
-  Credentials belong in a secret, where they are named and each read is logged.
+  Credentials travel as a `Credential` naming a secret, and forge sets the
+  header itself. See [Secrets](#secrets).
 - **Sends no proxy.** An inherited `HTTP_PROXY` would route around the
   screening.
 - **Truncates large bodies**, setting `Truncated` on the response. Check it
@@ -78,6 +79,42 @@ They are deliberately **not** environment variables: the environment is
 readable by everything in a process, cannot be audited per access, and would
 appear in the guest's own `os.Environ()` — handing a tool every secret the
 moment it was granted one.
+
+### Credentials
+
+A tool never needs a token's value to authenticate. It names the secret on the
+request, and forge reads it, checks it and sets the header:
+
+```go
+tool.HTTP(tool.HTTPRequest{URL: u, Credential: tool.Bearer("github-token")})
+tool.HTTP(tool.HTTPRequest{URL: u, Credential: &tool.Credential{Secret: "key", Header: "X-Api-Key"}})
+```
+
+| Field | Default | Notes |
+|---|---|---|
+| `Secret` | — | needs `secret` for this name, plus `net.http` for the host |
+| `Header` | `Authorization` | `Host` and `Proxy-*` are refused (`floor`) |
+| `Scheme` | `Bearer` on `Authorization`, raw elsewhere | `Basic` base64-encodes a `user:password` secret |
+
+Setting the same header in `Headers` too is an error, not a merge. A forge
+older than SDK v0.4.0 ignores `Credential`, so the request goes out bare and
+the server answers 401.
+
+### Binding a secret to hosts
+
+`forge secret set NAME --host api.example.com` (or `forge secret bind NAME
+HOST...`) restricts a secret to the hosts its owner says it belongs to.
+Patterns match exactly as `net.http` scopes do, `*.` included. A bound secret:
+
+- is attached only to requests for those hosts. Anything else is refused
+  `out_of_scope`, however wide the tool's `net.http` grant is;
+- **cannot be read** by `GetSecret`, which is refused `floor`, because a value
+  a tool has seen is a value it can send anywhere.
+
+Rotating a bound token with `forge secret set NAME` keeps its binding. Use
+`forge secret unbind NAME` to lift it.
+
+### The secret and network pair
 
 **A tool holding both `secret` and `net.http` can send what it reads wherever
 it may reach.** No sandbox prevents that; it is what both capabilities are for.

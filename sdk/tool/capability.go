@@ -156,12 +156,38 @@ type HTTPRequest struct {
 	// URL must be absolute and https, unless plain http was granted.
 	URL string `json:"url"`
 	// Headers are set on the request. forge refuses Authorization, Cookie,
-	// Host and the Proxy- family: credentials belong in a secret, where they
-	// are named and audited.
+	// Host and the Proxy- family: credentials go in Credential instead, where
+	// they are named, audited and never seen by the tool.
 	Headers map[string]string `json:"headers,omitempty"`
 	// Body is sent as-is.
 	Body []byte `json:"body,omitempty"`
+	// Credential asks forge to authenticate the request with a secret.
+	Credential *Credential `json:"credential,omitempty"`
 }
+
+// Credential names a secret for forge to attach to a request as a header.
+//
+// The tool never sees the value: forge reads the secret, checks it may be sent
+// to the request's host, and sets the header itself. The tool must declare the
+// secret capability for the name as well as net.http for the host. A secret
+// its owner has bound to hosts with `forge secret set --host` is only ever
+// attached to requests for those hosts, and cannot be read with GetSecret.
+//
+// A forge older than SDK v0.4.0 ignores this field, so the request goes out
+// unauthenticated and the server answers 401.
+type Credential struct {
+	// Secret is the secret's name.
+	Secret string `json:"secret"`
+	// Header defaults to Authorization.
+	Header string `json:"header,omitempty"`
+	// Scheme prefixes the value: "Bearer", or "Basic", which base64-encodes a
+	// secret holding user:password. Empty on Authorization means Bearer; on
+	// any other header it means the raw value, as an X-Api-Key wants.
+	Scheme string `json:"scheme,omitempty"`
+}
+
+// Bearer is the Credential for an Authorization: Bearer token.
+func Bearer(secret string) *Credential { return &Credential{Secret: secret, Scheme: "Bearer"} }
 
 // HTTPResponse is what comes back.
 type HTTPResponse struct {

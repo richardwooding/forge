@@ -44,6 +44,9 @@ type HTTPConfig struct {
 	// the cloud metadata endpoint stays refused whatever this says, because
 	// someone enabling loopback for local development is not asking for that.
 	AllowPrivate bool
+	// Credentials resolves the secrets a request names in its Credential.
+	// Without it, a request carrying one fails rather than going out bare.
+	Credentials hostabi.CredentialSource
 }
 
 func (c HTTPConfig) withDefaults() HTTPConfig {
@@ -154,9 +157,9 @@ func control(guard *ssrfguard.Guard) func(network, address string, c syscall.Raw
 
 // headersRefused are headers a guest may not set.
 //
-// Authorization and Cookie because a tool should get credentials from the
-// secret capability, where they are named and auditable, rather than smuggling
-// them into a header; Host because it decides which virtual host is addressed
+// Authorization and Cookie because credentials travel as a Credential, where
+// the host reads the secret, checks its binding and sets the header, rather
+// than as a value the tool has seen and could send elsewhere; Host because it decides which virtual host is addressed
 // and would make the allowlist check meaningless; the Proxy- family because
 // they steer the request past everything above.
 var headersRefused = []string{"authorization", "cookie", "host", "proxy-authorization", "proxy-connection"}
@@ -203,9 +206,16 @@ func (h *HTTP) Do(ctx context.Context, tool string, grants capability.Set, req h
 	for k, v := range req.Headers {
 		if refusedHeader(k) {
 			return hostabi.HTTPResponse{}, capability.Refusef(capability.DenyFloor,
-				"%s may not set the %s header; use the secret capability for credentials", tool, k)
+				"%s may not set the %s header; name a secret in the request's Credential instead", tool, k)
 		}
 		hreq.Header.Set(k, v)
+	}
+	if req.Credential != nil {
+		header, value, err := h.credential(ctx, tool, grants, target.Hostname(), req)
+		if err != nil {
+			return hostabi.HTTPResponse{}, err
+		}
+		hreq.Header.Set(header, value)
 	}
 	if hreq.Header.Get("User-Agent") == "" {
 		// Say who is calling. A server operator seeing unexpected traffic
@@ -242,6 +252,46 @@ func (h *HTTP) Do(ctx context.Context, tool string, grants capability.Set, req h
 		Body:      data,
 		Truncated: truncated,
 	}, nil
+}
+
+// credential resolves the header a request's Credential asks for.
+//
+// The binding is checked against this request's host alone. Redirects are not
+// followed, so a 3xx sends the guest back through here with the new URL, and
+// that is what keeps a bound token from following a redirect off its host.
+func (h *HTTP) credential(ctx context.Context, tool string, grants capability.Set, host string, req hostabi.HTTPRequest) (string, string, error) {
+	c := req.Credential
+	if h.cfg.Credentials == nil {
+		return "", "", errors.New("this forge has no secret source configured for credentials")
+	}
+	if d := grants.Allow(capability.Secret, c.Secret); !d.OK {
+		return "", "", capability.Refuse(d)
+	}
+
+	header := strings.TrimSpace(c.Header)
+	if header == "" {
+		header = "Authorization"
+	}
+	lower := strings.ToLower(header)
+	if lower == "host" || strings.HasPrefix(lower, "proxy-") {
+		return "", "", capability.Refusef(capability.DenyFloor,
+			"%s may not attach a credential as the %s header", tool, header)
+	}
+	for k := range req.Headers {
+		if strings.EqualFold(k, header) {
+			return "", "", fmt.Errorf("the request sets %s both as a header and as its credential", header)
+		}
+	}
+
+	secret, err := h.cfg.Credentials.Credential(ctx, tool, c.Secret, host)
+	if err != nil {
+		return "", "", err
+	}
+	value, err := CredentialValue(header, c.Scheme, secret)
+	if err != nil {
+		return "", "", err
+	}
+	return header, value, nil
 }
 
 // parseTarget reads a URL, refusing anything that is not an absolute http URL
