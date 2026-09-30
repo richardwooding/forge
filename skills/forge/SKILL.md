@@ -155,7 +155,9 @@ res, err := tool.HTTP(tool.HTTPRequest{
 })
 ```
 
-The tool needs `secret` for the name as well as `net.http` for the host.
+The tool needs `secret` for the name as well as `net.http` for the host. For an
+API that takes the token in the URL, write `tool.CredentialPlaceholder` where it
+goes and pass `tool.InURL(name)`.
 
 Those names are not `KV`, `Secret` and `Invoke` — those identifiers are the
 capability *constants* used in `Needs`.

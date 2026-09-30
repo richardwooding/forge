@@ -26,6 +26,7 @@ type HTTPCredential struct {
 	Secret string `json:"secret"`
 	Header string `json:"header,omitempty"`
 	Scheme string `json:"scheme,omitempty"`
+	In     string `json:"in,omitempty"`
 }
 
 // HTTPResponse is what it gets back.

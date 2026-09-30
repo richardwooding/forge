@@ -184,10 +184,23 @@ type Credential struct {
 	// secret holding user:password. Empty on Authorization means Bearer; on
 	// any other header it means the raw value, as an X-Api-Key wants.
 	Scheme string `json:"scheme,omitempty"`
+	// In is "header" (the default) or "url". A URL credential replaces the
+	// one CredentialPlaceholder in the request's path or query, for APIs such
+	// as Telegram's that carry the token there; Header and Scheme must then be
+	// empty. forge SDK v0.5.0 and later.
+	In string `json:"in,omitempty"`
 }
+
+// CredentialPlaceholder marks where a URL credential goes, as in
+// https://api.telegram.org/bot{credential}/getMe.
+const CredentialPlaceholder = "{credential}"
 
 // Bearer is the Credential for an Authorization: Bearer token.
 func Bearer(secret string) *Credential { return &Credential{Secret: secret, Scheme: "Bearer"} }
+
+// InURL is the Credential for a token carried in the URL at
+// CredentialPlaceholder.
+func InURL(secret string) *Credential { return &Credential{Secret: secret, In: "url"} }
 
 // HTTPResponse is what comes back.
 type HTTPResponse struct {

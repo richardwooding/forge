@@ -62,6 +62,13 @@ func run(ctx *tool.Context, a Args) (Out, error) {
 		}
 		return Out{Result: fmt.Sprintf("%d:%s", res.Status, strings.TrimSpace(string(res.Body)))}, nil
 
+	case "http-url-credential":
+		res, err := tool.HTTP(tool.HTTPRequest{URL: a.Arg + "/bot" + tool.CredentialPlaceholder + "/getMe", Credential: tool.InURL("token")})
+		if err != nil {
+			return denied(err)
+		}
+		return Out{Result: fmt.Sprintf("%d:%s", res.Status, strings.TrimSpace(string(res.Body)))}, nil
+
 	case "kv":
 		s := tool.OpenKV("notes")
 		if err := s.SetString("greeting", "hello"); err != nil {

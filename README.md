@@ -292,8 +292,9 @@ host" is not the same as "make this request safely":
   which puts the new URL through the allowlist on its own merits.
 - `Authorization`, `Cookie`, `Host` and `Proxy-*` cannot be set by a tool.
   A tool that needs to authenticate names a secret in the request's
-  `Credential` instead, and forge sets the header itself, so the tool never
-  sees the token.
+  `Credential` instead, and forge sets the header itself, or fills in a
+  `{credential}` placeholder in the URL for APIs that want it there. Either way
+  the tool never sees the token.
 
 Secrets are files under forge's config directory, mode 0600:
 
