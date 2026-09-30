@@ -317,3 +317,144 @@ func TestEchoedCredentialIsRedacted(t *testing.T) {
 		t.Errorf("the rest of the body should survive: %s", res.Body)
 	}
 }
+
+func TestURLCredentialIsSubstitutedByTheHost(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.RequestURI())
+		_, _ = w.Write([]byte(`{"ok":false,"description":"echo ` + r.URL.RequestURI() + `"}`))
+	}))
+	defer srv.Close()
+	host, _, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secrets := newSecrets(t, nil)
+	if err := secrets.Put("bot", "123456:AB/C+D"); err != nil {
+		t.Fatal(err)
+	}
+	svc := credentialService(t, secrets)
+	grants := grantsFor(host, "bot")
+	cred := &hostabi.HTTPCredential{Secret: "bot", In: "url"}
+
+	for _, tc := range []struct{ url, want string }{
+		{"/bot{credential}/getMe", "/bot123456:AB%2FC+D/getMe"},
+		{"/v1/things?key={credential}&x=1", "/v1/things?key=123456%3AAB%2FC%2BD&x=1"},
+	} {
+		paths = nil
+		res, err := svc.Do(context.Background(), "t", grants, hostabi.HTTPRequest{URL: srv.URL + tc.url, Credential: cred})
+		if err != nil {
+			t.Fatalf("%s: %v", tc.url, err)
+		}
+		if len(paths) != 1 || paths[0] != tc.want {
+			t.Errorf("%s: server saw %q, want %q", tc.url, paths, tc.want)
+		}
+		if strings.Contains(string(res.Body), "123456") {
+			t.Errorf("%s: the echoed token reached the guest: %s", tc.url, res.Body)
+		}
+	}
+}
+
+func TestURLCredentialRefusals(t *testing.T) {
+	srv, host, seen := credentialServer(t)
+	secrets := newSecrets(t, nil)
+	if err := secrets.Put("bot", "123456:ABCDEF"); err != nil {
+		t.Fatal(err)
+	}
+	if err := secrets.Put("bound", "654321:ZYXWVU"); err != nil {
+		t.Fatal(err)
+	}
+	if err := secrets.Bind("bound", []string{"api.telegram.org"}); err != nil {
+		t.Fatal(err)
+	}
+	svc := credentialService(t, secrets)
+	grants := grantsFor(host, "bot", "bound")
+	inURL := func(name string) *hostabi.HTTPCredential { return &hostabi.HTTPCredential{Secret: name, In: "url"} }
+	port := strings.TrimPrefix(srv.URL, "http://"+host)
+
+	for _, tc := range []struct {
+		name    string
+		req     hostabi.HTTPRequest
+		code    capability.DenyCode
+		message string
+	}{
+		{"no placeholder", hostabi.HTTPRequest{URL: srv.URL + "/getMe", Credential: inURL("bot")},
+			capability.DenyNone, "no {credential}"},
+		{"placeholder twice", hostabi.HTTPRequest{URL: srv.URL + "/{credential}/{credential}", Credential: inURL("bot")},
+			capability.DenyNone, "2 times"},
+		// Refused by URL parsing before forge's own authority check is reached;
+		// either way the placeholder never gets near the host.
+		{"placeholder as userinfo", hostabi.HTTPRequest{URL: "http://{credential}@" + host + port + "/x", Credential: inURL("bot")},
+			capability.DenyNone, "userinfo"},
+		{"placeholder in the host", hostabi.HTTPRequest{URL: "http://api{credential}.example.com/x", Credential: inURL("bot")},
+			capability.DenyNone, "host"},
+		{"placeholder as the port", hostabi.HTTPRequest{URL: "http://" + host + ":{credential}/x", Credential: inURL("bot")},
+			capability.DenyNone, "port"},
+		{"placeholder in the fragment", hostabi.HTTPRequest{URL: srv.URL + "/x#{credential}", Credential: inURL("bot")},
+			capability.DenyNone, "fragment"},
+		{"header with a url credential", hostabi.HTTPRequest{URL: srv.URL + "/{credential}",
+			Credential: &hostabi.HTTPCredential{Secret: "bot", In: "url", Header: "X-Key"}},
+			capability.DenyNone, "no header or scheme"},
+		{"placeholder with a header credential", hostabi.HTTPRequest{URL: srv.URL + "/{credential}",
+			Credential: &hostabi.HTTPCredential{Secret: "bot"}},
+			capability.DenyNone, "set In to url"},
+		{"unknown placement", hostabi.HTTPRequest{URL: srv.URL + "/{credential}",
+			Credential: &hostabi.HTTPCredential{Secret: "bot", In: "body"}},
+			capability.DenyNone, "body"},
+		{"bound elsewhere", hostabi.HTTPRequest{URL: srv.URL + "/bot{credential}/getMe", Credential: inURL("bound")},
+			capability.DenyOutOfScope, "api.telegram.org"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			*seen = nil
+			_, err := svc.Do(context.Background(), "t", grants, tc.req)
+			if err == nil {
+				t.Fatal("the request was allowed")
+			}
+			if len(*seen) != 0 {
+				t.Error("the server was reached despite the refusal")
+			}
+			d, isDenial := capability.AsDenial(err)
+			if tc.code == capability.DenyNone {
+				if isDenial {
+					t.Errorf("got a %s denial, want a plain failure: %v", d.Code, err)
+				}
+			} else if !isDenial || d.Code != tc.code {
+				t.Errorf("got %v, want a %s denial", err, tc.code)
+			}
+			if !strings.Contains(err.Error(), tc.message) {
+				t.Errorf("error %q does not mention %q", err, tc.message)
+			}
+			if strings.Contains(err.Error(), "123456") || strings.Contains(err.Error(), "654321") {
+				t.Fatal("the refusal leaked a secret value")
+			}
+		})
+	}
+}
+
+// TestURLCredentialStaysOutOfFailures checks the path that would leak it most
+// easily: a failed dial, whose *url.Error quotes the full URL.
+func TestURLCredentialStaysOutOfFailures(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	host, _, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dead := srv.URL
+	srv.Close()
+
+	secrets := newSecrets(t, nil)
+	if err := secrets.Put("bot", "123456:ABCDEF"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = credentialService(t, secrets).Do(context.Background(), "t", grantsFor(host, "bot"),
+		hostabi.HTTPRequest{URL: dead + "/bot{credential}/getMe", Credential: &hostabi.HTTPCredential{Secret: "bot", In: "url"}})
+	if err == nil {
+		t.Fatal("a request to a closed server succeeded")
+	}
+	if strings.Contains(err.Error(), "123456") {
+		t.Fatalf("the failure quoted the token: %v", err)
+	}
+	if !strings.Contains(err.Error(), "[redacted]") {
+		t.Errorf("the failure should still say which URL failed, with the token redacted: %v", err)
+	}
+}

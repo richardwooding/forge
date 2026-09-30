@@ -314,6 +314,10 @@ func TestGuestCredential(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		// The host redacts an echoed credential, so the server reports whether
 		// the header matched rather than echoing it.
+		if req.URL.Path == "/bots3cret-value/getMe" {
+			_, _ = fmt.Fprint(w, "path:", req.URL.Path)
+			return
+		}
 		_, _ = fmt.Fprint(w, req.Header.Get("Authorization") == "Bearer s3cret-value")
 	}))
 	defer srv.Close()
@@ -349,6 +353,16 @@ func TestGuestCredential(t *testing.T) {
 		t.Cleanup(func() { _ = secrets.Unbind("token") })
 		got := r.run(t, "http-credential", srv.URL)
 		if want := "200:true"; got.Result != want {
+			t.Errorf("got %q, want %q", got.Result, want)
+		}
+	})
+
+	t.Run("a URL credential is substituted, and its echo redacted", func(t *testing.T) {
+		got := r.run(t, "http-url-credential", srv.URL)
+		if got.Denied {
+			t.Fatalf("the request was denied: %s", got.Result)
+		}
+		if want := "200:path:/bot[redacted]/getMe"; got.Result != want {
 			t.Errorf("got %q, want %q", got.Result, want)
 		}
 	})

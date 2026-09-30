@@ -95,6 +95,24 @@ tool.HTTP(tool.HTTPRequest{URL: u, Credential: &tool.Credential{Secret: "key", H
 | `Secret` | — | needs `secret` for this name, plus `net.http` for the host |
 | `Header` | `Authorization` | `Host` and `Proxy-*` are refused (`floor`) |
 | `Scheme` | `Bearer` on `Authorization`, raw elsewhere | `Basic` base64-encodes a `user:password` secret |
+| `In` | `header` | `url` puts the secret at `{credential}` in the URL instead |
+
+Some APIs carry the token in the URL: Telegram's is
+`https://api.telegram.org/bot<token>/getMe`. Write the placeholder where it
+goes and let forge fill it in:
+
+```go
+tool.HTTP(tool.HTTPRequest{
+    URL:        "https://api.telegram.org/bot" + tool.CredentialPlaceholder + "/getMe",
+    Credential: tool.InURL("telegram-token"),
+})
+```
+
+The placeholder must appear exactly once, in the path or the query. forge
+escapes the value for where it lands, refuses it anywhere that could change
+which server is reached, and redacts it from the response and from forge's own
+error messages, which would otherwise quote the URL. A URL credential needs SDK
+v0.5.0 and forge v0.14.0.
 
 Setting the same header in `Headers` too is an error, not a merge. If the
 server echoes the credential back, as Graph does when it quotes a malformed

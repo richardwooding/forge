@@ -8,7 +8,6 @@
 package hostsvc
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -195,30 +194,33 @@ func (h *HTTP) Do(ctx context.Context, tool string, grants capability.Set, req h
 		method = http.MethodGet
 	}
 
-	var body io.Reader
-	if len(req.Body) > 0 {
-		body = strings.NewReader(string(req.Body))
-	}
-	hreq, err := http.NewRequestWithContext(ctx, method, req.URL, body)
-	if err != nil {
-		return hostabi.HTTPResponse{}, fmt.Errorf("cannot build the request: %w", err)
-	}
-
-	for k, v := range req.Headers {
+	for k := range req.Headers {
 		if refusedHeader(k) {
 			return hostabi.HTTPResponse{}, capability.Refusef(capability.DenyFloor,
 				"%s may not set the %s header; name a secret in the request's Credential instead", tool, k)
 		}
-		hreq.Header.Set(k, v)
 	}
-	var attached []string
+
+	cred := placement{url: req.URL}
 	if req.Credential != nil {
-		header, value, secret, err := h.credential(ctx, tool, grants, target.Hostname(), req)
-		if err != nil {
+		if cred, err = h.credential(ctx, tool, grants, target.Hostname(), req); err != nil {
 			return hostabi.HTTPResponse{}, err
 		}
-		hreq.Header.Set(header, value)
-		attached = []string{value, secret}
+	}
+
+	var body io.Reader
+	if len(req.Body) > 0 {
+		body = strings.NewReader(string(req.Body))
+	}
+	hreq, err := http.NewRequestWithContext(ctx, method, cred.url, body)
+	if err != nil {
+		return hostabi.HTTPResponse{}, fmt.Errorf("cannot build the request: %s", cred.redact(err.Error()))
+	}
+	for k, v := range req.Headers {
+		hreq.Header.Set(k, v)
+	}
+	if cred.header != "" {
+		hreq.Header.Set(cred.header, cred.value)
 	}
 	if hreq.Header.Get("User-Agent") == "" {
 		// Say who is calling. A server operator seeing unexpected traffic
@@ -233,7 +235,11 @@ func (h *HTTP) Do(ctx context.Context, tool string, grants capability.Set, req h
 		// send a tool author looking for a network problem that is not there.
 		if errors.Is(err, ssrfguard.ErrBlockedAddress) {
 			return hostabi.HTTPResponse{}, capability.Refusef(capability.DenyFloor,
-				"%s is not a permitted address: %v", req.URL, unwrapURLError(err))
+				"%s is not a permitted address: %s", req.URL, cred.redact(unwrapURLError(err).Error()))
+		}
+		// *url.Error quotes the URL, which is where a URL credential lives.
+		if len(cred.attached) > 0 {
+			return hostabi.HTTPResponse{}, fmt.Errorf("request failed: %s", cred.redact(err.Error()))
 		}
 		return hostabi.HTTPResponse{}, fmt.Errorf("request failed: %w", err)
 	}
@@ -242,24 +248,21 @@ func (h *HTTP) Do(ctx context.Context, tool string, grants capability.Set, req h
 	limited := io.LimitReader(res.Body, h.cfg.MaxBodyBytes+1)
 	data, err := io.ReadAll(limited)
 	if err != nil {
-		return hostabi.HTTPResponse{}, fmt.Errorf("reading the response: %w", err)
+		return hostabi.HTTPResponse{}, fmt.Errorf("reading the response: %s", cred.redact(err.Error()))
 	}
 	truncated := int64(len(data)) > h.cfg.MaxBodyBytes
 	if truncated {
 		data = data[:h.cfg.MaxBodyBytes]
 	}
 
-	headers := flatten(res.Header)
 	// Servers echo credentials back: Graph quotes a malformed token in its
 	// error message. The tool was promised it never sees the value, so the
 	// host scrubs it before the response crosses into the guest.
-	for _, v := range attached {
-		if len(v) < 6 {
-			continue
-		}
-		data = bytes.ReplaceAll(data, []byte(v), []byte("[redacted]"))
+	headers := flatten(res.Header)
+	if len(cred.attached) > 0 {
+		data = []byte(cred.redact(string(data)))
 		for k, hv := range headers {
-			headers[k] = strings.ReplaceAll(hv, v, "[redacted]")
+			headers[k] = cred.redact(hv)
 		}
 	}
 
@@ -271,44 +274,123 @@ func (h *HTTP) Do(ctx context.Context, tool string, grants capability.Set, req h
 	}, nil
 }
 
-// credential resolves the header a request's Credential asks for.
+// CredentialPlaceholder marks where a URL credential goes. sdk/tool mirrors it.
+const CredentialPlaceholder = "{credential}"
+
+// placement is a request's credential, resolved: a header to set, or the URL
+// with the secret substituted in. attached holds every form of the value that
+// was sent, so each can be redacted from whatever comes back.
+type placement struct {
+	header, value string
+	url           string
+	attached      []string
+}
+
+func (p placement) redact(s string) string {
+	for _, v := range p.attached {
+		// Very short values are skipped: replacing every "a" in a response
+		// would do more damage than the leak it prevents.
+		if len(v) >= 6 {
+			s = strings.ReplaceAll(s, v, "[redacted]")
+		}
+	}
+	return s
+}
+
+// credential resolves a request's Credential.
 //
 // The binding is checked against this request's host alone. Redirects are not
 // followed, so a 3xx sends the guest back through here with the new URL, and
 // that is what keeps a bound token from following a redirect off its host.
-func (h *HTTP) credential(ctx context.Context, tool string, grants capability.Set, host string, req hostabi.HTTPRequest) (header, value, secret string, err error) {
+func (h *HTTP) credential(ctx context.Context, tool string, grants capability.Set, host string, req hostabi.HTTPRequest) (placement, error) {
 	c := req.Credential
 	if h.cfg.Credentials == nil {
-		return "", "", "", errors.New("this forge has no secret source configured for credentials")
+		return placement{}, errors.New("this forge has no secret source configured for credentials")
 	}
 	if d := grants.Allow(capability.Secret, c.Secret); !d.OK {
-		return "", "", "", capability.Refuse(d)
+		return placement{}, capability.Refuse(d)
 	}
 
-	header = strings.TrimSpace(c.Header)
+	switch strings.ToLower(c.In) {
+	case "", "header":
+		return h.headerCredential(ctx, tool, host, req)
+	case "url":
+		return h.urlCredential(ctx, tool, host, req)
+	}
+	return placement{}, fmt.Errorf("a credential goes in the header or the url, not %q", c.In)
+}
+
+func (h *HTTP) headerCredential(ctx context.Context, tool, host string, req hostabi.HTTPRequest) (placement, error) {
+	c := req.Credential
+	if strings.Contains(req.URL, CredentialPlaceholder) {
+		return placement{}, fmt.Errorf("the URL holds %s but the credential goes in a header; set In to url", CredentialPlaceholder)
+	}
+	header := strings.TrimSpace(c.Header)
 	if header == "" {
 		header = "Authorization"
 	}
 	lower := strings.ToLower(header)
 	if lower == "host" || strings.HasPrefix(lower, "proxy-") {
-		return "", "", "", capability.Refusef(capability.DenyFloor,
+		return placement{}, capability.Refusef(capability.DenyFloor,
 			"%s may not attach a credential as the %s header", tool, header)
 	}
 	for k := range req.Headers {
 		if strings.EqualFold(k, header) {
-			return "", "", "", fmt.Errorf("the request sets %s both as a header and as its credential", header)
+			return placement{}, fmt.Errorf("the request sets %s both as a header and as its credential", header)
 		}
 	}
 
-	secret, err = h.cfg.Credentials.Credential(ctx, tool, c.Secret, host)
+	secret, err := h.cfg.Credentials.Credential(ctx, tool, c.Secret, host)
 	if err != nil {
-		return "", "", "", err
+		return placement{}, err
 	}
-	value, err = CredentialValue(header, c.Scheme, secret)
+	value, err := CredentialValue(header, c.Scheme, secret)
 	if err != nil {
-		return "", "", "", err
+		return placement{}, err
 	}
-	return header, value, secret, nil
+	return placement{header: header, value: value, url: req.URL, attached: []string{value, secret}}, nil
+}
+
+// urlCredential substitutes the secret for the placeholder, which must sit in
+// the path or query exactly once. Anywhere before the path it could change
+// which server is reached, after the binding was checked against another.
+func (h *HTTP) urlCredential(ctx context.Context, tool, host string, req hostabi.HTTPRequest) (placement, error) {
+	c := req.Credential
+	if c.Header != "" || c.Scheme != "" {
+		return placement{}, errors.New("a URL credential takes no header or scheme")
+	}
+	switch n := strings.Count(req.URL, CredentialPlaceholder); n {
+	case 0:
+		return placement{}, fmt.Errorf("the credential goes in the URL, but the URL has no %s", CredentialPlaceholder)
+	case 1:
+	default:
+		return placement{}, fmt.Errorf("the URL holds %s %d times; it may appear once", CredentialPlaceholder, n)
+	}
+
+	at := strings.Index(req.URL, CredentialPlaceholder)
+	authority := strings.Index(req.URL, "://") + len("://")
+	pathStart := strings.IndexAny(req.URL[authority:], "/?#")
+	if pathStart < 0 || at < authority+pathStart {
+		return placement{}, capability.Refusef(capability.DenyFloor,
+			"%s may only put a credential in the URL's path or query, never its host", tool)
+	}
+	query := strings.Index(req.URL, "?")
+	if fragment := strings.Index(req.URL, "#"); fragment >= 0 && fragment < at {
+		return placement{}, errors.New("a credential in the URL's fragment is never sent to the server")
+	}
+
+	secret, err := h.cfg.Credentials.Credential(ctx, tool, c.Secret, host)
+	if err != nil {
+		return placement{}, err
+	}
+	escaped := url.PathEscape(secret)
+	if query >= 0 && query < at {
+		escaped = url.QueryEscape(secret)
+	}
+	return placement{
+		url:      strings.Replace(req.URL, CredentialPlaceholder, escaped, 1),
+		attached: []string{escaped, secret},
+	}, nil
 }
 
 // parseTarget reads a URL, refusing anything that is not an absolute http URL
