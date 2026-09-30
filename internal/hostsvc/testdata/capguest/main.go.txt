@@ -55,6 +55,13 @@ func run(ctx *tool.Context, a Args) (Out, error) {
 		}
 		return Out{Result: "the header was accepted"}, nil
 
+	case "http-credential":
+		res, err := tool.HTTP(tool.HTTPRequest{URL: a.Arg, Credential: tool.Bearer("token")})
+		if err != nil {
+			return denied(err)
+		}
+		return Out{Result: fmt.Sprintf("%d:%s", res.Status, strings.TrimSpace(string(res.Body)))}, nil
+
 	case "kv":
 		s := tool.OpenKV("notes")
 		if err := s.SetString("greeting", "hello"); err != nil {

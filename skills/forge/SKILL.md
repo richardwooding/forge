@@ -143,6 +143,20 @@ needing the network makes the whole tool prompt. Split a tool if that matters.
 Guest calls: `tool.HTTP` / `tool.Get` / `tool.GetJSON`, `tool.OpenKV(ns)`,
 `tool.GetSecret(name)`, `tool.Call(tool, op, in, &out)`.
 
+To authenticate, never read a token and set a header: forge refuses guest-set
+`Authorization`. Name the secret and let forge attach it, which also works for
+secrets bound to a host, which `GetSecret` cannot read:
+
+```go
+res, err := tool.HTTP(tool.HTTPRequest{
+    Method:     "POST",
+    URL:        "https://api.example.com/v1/things",
+    Credential: tool.Bearer("example-token"), // or &tool.Credential{Secret: ..., Header: "X-Api-Key"}
+})
+```
+
+The tool needs `secret` for the name as well as `net.http` for the host.
+
 Those names are not `KV`, `Secret` and `Invoke` — those identifiers are the
 capability *constants* used in `Needs`.
 

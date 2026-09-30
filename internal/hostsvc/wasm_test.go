@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -303,6 +304,80 @@ func TestGuestSecret(t *testing.T) {
 		got := bare.run(t, "secret", "token")
 		if !got.Denied {
 			t.Fatalf("a tool with no secret grant read one: %s", got.Result)
+		}
+	})
+}
+
+// TestGuestCredential runs a credential end to end: the guest names the
+// secret, the host attaches it, and the value never crosses into the guest.
+func TestGuestCredential(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		// The host redacts an echoed credential, so the server reports whether
+		// the header matched rather than echoing it.
+		_, _ = fmt.Fprint(w, req.Header.Get("Authorization") == "Bearer s3cret-value")
+	}))
+	defer srv.Close()
+	host, _, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	secrets := hostsvc.NewSecrets(hostsvc.SecretsConfig{Dir: t.TempDir()})
+	if err := secrets.Put("token", "s3cret-value"); err != nil {
+		t.Fatal(err)
+	}
+	services := hostabi.Services{
+		HTTP:    hostsvc.NewHTTP(hostsvc.HTTPConfig{AllowPrivate: true, Credentials: secrets}),
+		Secrets: secrets,
+	}
+	r := newRunner(t, services, grantSet(t, [2]string{"net.http", host}, [2]string{"secret", "token"}))
+
+	t.Run("an unbound secret is attached", func(t *testing.T) {
+		got := r.run(t, "http-credential", srv.URL)
+		if got.Denied {
+			t.Fatalf("the request was denied: %s", got.Result)
+		}
+		if want := "200:true"; got.Result != want {
+			t.Errorf("got %q, want %q", got.Result, want)
+		}
+	})
+
+	t.Run("a secret bound to its host is attached", func(t *testing.T) {
+		if err := secrets.Bind("token", []string{host}); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = secrets.Unbind("token") })
+		got := r.run(t, "http-credential", srv.URL)
+		if want := "200:true"; got.Result != want {
+			t.Errorf("got %q, want %q", got.Result, want)
+		}
+	})
+
+	t.Run("a secret bound elsewhere is refused", func(t *testing.T) {
+		if err := secrets.Bind("token", []string{"graph.facebook.com"}); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = secrets.Unbind("token") })
+		got := r.run(t, "http-credential", srv.URL)
+		if !got.Denied || got.Code != "out_of_scope" {
+			t.Fatalf("got %+v, want an out_of_scope denial", got)
+		}
+		if strings.Contains(got.Result, "s3cret-value") {
+			t.Fatal("the denial leaked the secret value")
+		}
+	})
+
+	t.Run("a bound secret cannot be read", func(t *testing.T) {
+		if err := secrets.Bind("token", []string{host}); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = secrets.Unbind("token") })
+		got := r.run(t, "secret", "token")
+		if !got.Denied || got.Code != "floor" {
+			t.Fatalf("got %+v, want a floor denial", got)
+		}
+		if strings.Contains(got.Result, "s3cret-value") {
+			t.Fatal("a bound secret's value reached the guest")
 		}
 	})
 }

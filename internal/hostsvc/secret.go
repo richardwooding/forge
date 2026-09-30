@@ -2,13 +2,17 @@ package hostsvc
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
+
+	"github.com/richardwooding/forge/internal/capability"
 )
 
 // SecretAccess records one secret read, for the audit log.
@@ -171,12 +175,20 @@ func (s *Secrets) Put(name, value string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(s.cfg.Dir, 0o700); err != nil {
-		return fmt.Errorf("creating the secrets directory: %w", err)
-	}
-	tmp, err := os.CreateTemp(s.cfg.Dir, ".tmp-*")
-	if err != nil {
+	if err := writePrivate(s.cfg.Dir, clean, value); err != nil {
 		return fmt.Errorf("writing the secret: %w", err)
+	}
+	return nil
+}
+
+// writePrivate writes a file atomically, readable only by its owner.
+func writePrivate(dir, name, value string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".tmp-*")
+	if err != nil {
+		return err
 	}
 	tmpName := tmp.Name()
 	defer func() { _ = os.Remove(tmpName) }()
@@ -185,22 +197,20 @@ func (s *Secrets) Put(name, value string) error {
 	// even briefly.
 	if err := tmp.Chmod(0o600); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("writing the secret: %w", err)
+		return err
 	}
 	if _, err := tmp.WriteString(value); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("writing the secret: %w", err)
+		return err
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("writing the secret: %w", err)
+		return err
 	}
-	if err := os.Rename(tmpName, filepath.Join(s.cfg.Dir, clean)); err != nil {
-		return fmt.Errorf("writing the secret: %w", err)
-	}
-	return nil
+	return os.Rename(tmpName, filepath.Join(dir, name))
 }
 
-// Remove deletes a secret. Removing one that is not there is not an error.
+// Remove deletes a secret and its binding. Removing one that is not there is
+// not an error.
 func (s *Secrets) Remove(name string) error {
 	clean, err := identifier("secret name", name)
 	if err != nil {
@@ -209,5 +219,154 @@ func (s *Secrets) Remove(name string) error {
 	if err := os.Remove(filepath.Join(s.cfg.Dir, clean)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("removing the secret: %w", err)
 	}
+	return s.Unbind(clean)
+}
+
+// bindingDir holds one file per bound secret. It is a directory, so Names
+// never lists it, and identifier refuses a slash, so no secret name reaches it.
+func (s *Secrets) bindingDir() string { return filepath.Join(s.cfg.Dir, ".hosts") }
+
+// Bind restricts a secret to the given host patterns, replacing any earlier
+// binding. The secret need not exist yet: binding before storing is how a new
+// token avoids ever being on disk unbound.
+func (s *Secrets) Bind(name string, hosts []string) error {
+	clean, err := identifier("secret name", name)
+	if err != nil {
+		return err
+	}
+	if len(hosts) == 0 {
+		return errors.New("a binding needs at least one host")
+	}
+	patterns := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		p, err := hostPattern(h)
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(patterns, p) {
+			patterns = append(patterns, p)
+		}
+	}
+	slices.Sort(patterns)
+	return writePrivate(s.bindingDir(), clean, strings.Join(patterns, "\n")+"\n")
+}
+
+// Unbind lifts a secret's binding. Unbinding one that is not bound is not an
+// error.
+func (s *Secrets) Unbind(name string) error {
+	clean, err := identifier("secret name", name)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(s.bindingDir(), clean)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("removing the binding: %w", err)
+	}
 	return nil
+}
+
+// Hosts returns the patterns a secret is bound to, or nil when it is unbound.
+func (s *Secrets) Hosts(name string) ([]string, error) {
+	clean, err := identifier("secret name", name)
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(s.bindingDir(), clean)
+	info, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading the binding for %q: %w", name, err)
+	}
+	// Unreadable or tampered with is not the same as unbound: failing open here
+	// would hand a bound token to whichever host asked.
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("the binding for %q is not a regular file", name)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading the binding for %q: %w", name, err)
+	}
+	var hosts []string
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			hosts = append(hosts, line)
+		}
+	}
+	if len(hosts) == 0 {
+		return nil, fmt.Errorf("the binding for %q is empty; rebind it or run forge secret unbind %s", name, name)
+	}
+	return hosts, nil
+}
+
+// Bound implements hostabi.SecretSource.
+func (s *Secrets) Bound(name string) (bool, error) {
+	hosts, err := s.Hosts(name)
+	return len(hosts) > 0, err
+}
+
+// Credential implements hostabi.CredentialSource.
+//
+// The binding is checked before the secret is read, so a refused request
+// leaves no read in the audit log for a value that was never used.
+func (s *Secrets) Credential(ctx context.Context, tool, name, host string) (string, error) {
+	hosts, err := s.Hosts(name)
+	if err != nil {
+		return "", err
+	}
+	if len(hosts) > 0 {
+		bound := capability.NewSet(capability.Grant{Kind: capability.NetHTTP, Scope: hosts})
+		if !bound.Allow(capability.NetHTTP, host).OK {
+			return "", capability.Refusef(capability.DenyOutOfScope,
+				"secret %q is bound to %s and may not be sent to %s", name, strings.Join(hosts, ", "), host)
+		}
+	}
+	v, found, err := s.Secret(ctx, tool, name)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", fmt.Errorf("the secret %q is not set; add it with: forge secret set %s", name, name)
+	}
+	return v, nil
+}
+
+// CredentialValue renders a secret as the value of the header it is attached
+// to.
+func CredentialValue(header, scheme, secret string) (string, error) {
+	if scheme == "" && strings.EqualFold(header, "Authorization") {
+		scheme = "Bearer"
+	}
+	switch strings.ToLower(scheme) {
+	case "":
+		return secret, nil
+	case "basic":
+		return "Basic " + base64.StdEncoding.EncodeToString([]byte(secret)), nil
+	case "bearer":
+		return "Bearer " + secret, nil
+	}
+	return "", fmt.Errorf("unknown credential scheme %q; use Bearer, Basic or none", scheme)
+}
+
+// hostPattern validates a binding pattern: a host name, optionally with one
+// leading "*." label, as net.http grants use. A port, scheme or path is
+// refused rather than stripped, since a binding someone mistyped should fail
+// where they typed it.
+func hostPattern(raw string) (string, error) {
+	p := strings.ToLower(strings.TrimSpace(raw))
+	name := strings.TrimPrefix(p, "*.")
+	if name == "" || strings.ContainsAny(name, "*:/@?# ") {
+		return "", fmt.Errorf("%q is not a host; give a name such as api.example.com or *.example.com", raw)
+	}
+	for label := range strings.SplitSeq(name, ".") {
+		if label == "" || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return "", fmt.Errorf("%q is not a host name", raw)
+		}
+		for _, r := range label {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+				return "", fmt.Errorf("%q is not a host name", raw)
+			}
+		}
+	}
+	return p, nil
 }
