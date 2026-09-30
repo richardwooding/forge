@@ -96,7 +96,10 @@ tool.HTTP(tool.HTTPRequest{URL: u, Credential: &tool.Credential{Secret: "key", H
 | `Header` | `Authorization` | `Host` and `Proxy-*` are refused (`floor`) |
 | `Scheme` | `Bearer` on `Authorization`, raw elsewhere | `Basic` base64-encodes a `user:password` secret |
 
-Setting the same header in `Headers` too is an error, not a merge. A forge
+Setting the same header in `Headers` too is an error, not a merge. If the
+server echoes the credential back, as Graph does when it quotes a malformed
+token in an error, forge replaces it with `[redacted]` in the response body and
+headers before the tool sees them. A forge
 older than SDK v0.4.0 ignores `Credential`, so the request goes out bare and
 the server answers 401.
 

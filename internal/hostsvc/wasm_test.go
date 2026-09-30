@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -311,7 +312,9 @@ func TestGuestSecret(t *testing.T) {
 // secret, the host attaches it, and the value never crosses into the guest.
 func TestGuestCredential(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		_, _ = w.Write([]byte(req.Header.Get("Authorization")))
+		// The host redacts an echoed credential, so the server reports whether
+		// the header matched rather than echoing it.
+		_, _ = fmt.Fprint(w, req.Header.Get("Authorization") == "Bearer s3cret-value")
 	}))
 	defer srv.Close()
 	host, _, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
@@ -334,7 +337,7 @@ func TestGuestCredential(t *testing.T) {
 		if got.Denied {
 			t.Fatalf("the request was denied: %s", got.Result)
 		}
-		if want := "200:Bearer s3cret-value"; got.Result != want {
+		if want := "200:true"; got.Result != want {
 			t.Errorf("got %q, want %q", got.Result, want)
 		}
 	})
@@ -345,7 +348,7 @@ func TestGuestCredential(t *testing.T) {
 		}
 		t.Cleanup(func() { _ = secrets.Unbind("token") })
 		got := r.run(t, "http-credential", srv.URL)
-		if want := "200:Bearer s3cret-value"; got.Result != want {
+		if want := "200:true"; got.Result != want {
 			t.Errorf("got %q, want %q", got.Result, want)
 		}
 	})

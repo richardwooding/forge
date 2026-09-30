@@ -287,3 +287,33 @@ func TestSecretBindingRefusesBadPatterns(t *testing.T) {
 		t.Error("a path-shaped secret name was accepted")
 	}
 }
+
+func TestEchoedCredentialIsRedacted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		w.Header().Set("X-Echo", auth)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"Malformed access token ` + strings.TrimPrefix(auth, "Bearer ") + `"}}`))
+	}))
+	defer srv.Close()
+	host, _, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	secrets := newSecrets(t, nil)
+	if err := secrets.Put("token", "tok-123456"); err != nil {
+		t.Fatal(err)
+	}
+	res, err := credentialService(t, secrets).Do(context.Background(), "t", grantsFor(host, "token"),
+		hostabi.HTTPRequest{URL: srv.URL, Credential: &hostabi.HTTPCredential{Secret: "token"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(res.Body), "tok-123456") || strings.Contains(res.Headers["X-Echo"], "tok-123456") {
+		t.Fatalf("the echoed token reached the guest: body %s, header %q", res.Body, res.Headers["X-Echo"])
+	}
+	if !strings.Contains(string(res.Body), "Malformed access token [redacted]") {
+		t.Errorf("the rest of the body should survive: %s", res.Body)
+	}
+}
